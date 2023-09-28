@@ -1,0 +1,239 @@
+//#region Comment Type Configurations Region
+        $(document).ready(function () {
+
+            roleSelect();
+            commentTypeSelect();
+            designationSelect();
+
+            var jsonObj = @Html.Raw(Json.Encode(ViewBag.CommentTypeConfig));
+
+            for (var i = 0; i < jsonObj.length; i++) {
+                if (jsonObj[i].ConfigurationType == 'RoleBased') {
+                    if (i > 0) {
+                        addRoleBasedConfigRow();
+                    }
+                    let id = jsonObj[i].Id;
+                    let clientId = jsonObj[i].ClientId;
+                    let configType = jsonObj[i].ConfigurationType;
+                    let roleIds = jsonObj[i].RoleIds.split(',');
+                    let commentTypeIds = jsonObj[i].CommentTypeIds.split(',');
+                    let operatorType = jsonObj[i].OperatorType;
+
+                    $("#roleBasedContainerId").find('.row:last').each(function () {
+                        $(this).attr("data-id", id);
+                        $(this).find(".selectRole").val(roleIds);
+                        $(this).find(".selectRole").multiselect("refresh");
+                        $(this).find(".roleCommentType").val(commentTypeIds);
+                        $(this).find(".roleCommentType").multiselect("refresh");
+                    });
+                    // Switch to "RoleBased" radio button
+                    $("#roleBasedConfig").prop("checked", true);
+                    if (operatorType == 'Or') {
+                        $("#nav-Or-tab").addClass("active");
+                        $("#nav-And-tab").removeClass("active");
+                        $("#nav-Or-tab").tab("show");
+                    }
+
+                    // Check both the multiselect dropdown is selected or not
+                    $("#roleBasedContainerId .row:first").each(function () {
+                        let roleSelected = $(this).find('.selectRole').val();
+                        let cTypeSelected = $(this).find('.roleCommentType').val();
+
+                        if (roleSelected.length != 0 && cTypeSelected.length != 0) {
+                            $(this).find(".add-button-container").removeClass('SFTPContainer');
+                        }
+                    });
+                }
+                else {
+                    if (i > 0) {
+                        addDesignationBasedConfigRow();
+                    }
+                    let id = jsonObj[i].Id;
+                    let clientId = jsonObj[i].ClientId;
+                    let configType = jsonObj[i].ConfigurationType;
+                    let designationIds = jsonObj[i].DesignationIds.split(',');
+                    let commentTypeIds = jsonObj[i].CommentTypeIds.split(',');
+                    let operatorType = jsonObj[i].OperatorType;
+
+                    $("#designationBasedContainerId").find('.row:last').each(function () {
+                        $(this).attr("data-id", id);
+                        $(this).find(".selectDesignation").val(designationIds);
+                        $(this).find(".selectDesignation").multiselect("refresh");
+                        $(this).find(".designationCommentType").val(commentTypeIds);
+                        $(this).find(".designationCommentType").multiselect("refresh");
+                    });
+                    // Switch to "DesignationBased" radio button
+                    $("#designationBasedConfig").prop("checked", true);
+                    toggleCommentTypeConfig(configType);
+
+                    if (operatorType == 'Or') {
+                        $("#nav-Or-tab").addClass("active");
+                        $("#nav-And-tab").removeClass("active");
+                        $("#nav-Or-tab").tab("show");
+                    }
+
+                    $("#designationBasedContainerId .row:first").each(function () {
+                        let designationSelected = $(this).find('.selectDesignation').val();
+                        let dTypeSelected = $(this).find('.designationCommentType').val();
+
+                        if (designationSelected.length != 0 && dTypeSelected.length != 0) {
+                            $(this).find(".add-button-container").removeClass('SFTPContainer');
+                        }
+                    });
+                }
+            }
+        })
+
+        function roleSelect() {
+            $('.selectRole').multiselect({
+                includeSelectAllOption: true
+            });
+        }
+
+        function commentTypeSelect() {
+            $('.roleCommentType').multiselect({
+                includeSelectAllOption: true
+            });
+
+            $('.designationCommentType').multiselect({
+                includeSelectAllOption: true
+            });
+        }
+
+        function designationSelect() {
+            $('.selectDesignation').multiselect({
+                includeSelectAllOption: true
+            });
+        }
+
+        // Change event to check both the multiselect dropdown is selected or not
+        $("#roleBasedContainerId .row:first").on('change', function (e) {
+            let roleSelected = $(this).find('.selectRole').val();
+            let cTypeSelected = $(this).find('.roleCommentType').val();
+
+            if (roleSelected.length != 0 && cTypeSelected.length != 0) {
+                $(this).find(".add-button-container").removeClass('SFTPContainer');
+            }
+
+            // Code to disabled the selected options in others Select Role dropdown
+            var selectedValuesInPreviousDropdowns = [];
+
+            $("#roleBasedContainerId .row").find(".selectRole").each(function () {
+                var selectedValues = $(this).val();
+                selectedValuesInPreviousDropdowns = selectedValuesInPreviousDropdowns.concat(selectedValues);
+
+            });
+
+            $("#roleBasedContainerId .row").find(".selectRole").each(function () {
+                //$(this).multiselect('destroy');
+                var currDropdown = $(this);
+
+                if (selectedValuesInPreviousDropdowns && selectedValuesInPreviousDropdowns.length > 0) {
+                    currDropdown.find("option").each(function () {
+                        if (selectedValuesInPreviousDropdowns.includes($(this).val()) && !currDropdown.val().includes($(this).val())) {
+                            $(this).prop("disabled", true);
+                        } else {
+                            $(this).prop("disabled", false);
+                        }
+                    });
+                }
+                $(this).multiselect({ includeSelectAllOption: true });
+                $(this).multiselect('refresh');
+            });
+        });
+
+
+        // Change event to disabled the selected options in others Select Role dropdown
+        $("#roleBasedContainerId").on('change', '.row:not(:first) .selectRole', function (e) {
+
+            // Reset the selectedValuesInPreviousDropdowns array
+            var selectedValuesInPreviousDropdowns = [];
+
+            $("#roleBasedContainerId .row").find(".selectRole").each(function () {
+                var selectedValues = $(this).val();
+                selectedValuesInPreviousDropdowns = selectedValuesInPreviousDropdowns.concat(selectedValues);
+
+            });
+
+            $("#roleBasedContainerId .row").find(".selectRole").each(function () {
+                var currDropdown = $(this);
+
+                if (selectedValuesInPreviousDropdowns && selectedValuesInPreviousDropdowns.length > 0) {
+                    currDropdown.find("option").each(function () {
+                        if (selectedValuesInPreviousDropdowns.includes($(this).val()) && !currDropdown.val().includes($(this).val())) {
+                            $(this).prop("disabled", true);
+                        } else {
+                            $(this).prop("disabled", false);
+                        }
+                    });
+                }
+                $(this).multiselect({ includeSelectAllOption: true });
+                $(this).multiselect('refresh');
+            });
+        });
+
+
+        $("#designationBasedContainerId .row:first").on('change', function (e) {
+            let designationSelected = $(this).find('.selectDesignation').val();
+            let dTypeSelected = $(this).find('.designationCommentType').val();
+
+            if (designationSelected.length != 0 && dTypeSelected.length != 0) {
+                $(this).find(".add-button-container").removeClass('SFTPContainer');
+            }
+
+            // Code to disabled the selected options in others Select Designation dropdown
+            var selectedValuesInPreviousDropdowns = [];
+
+            $("#designationBasedContainerId .row").find(".selectDesignation").each(function () {
+                var selectedValues = $(this).val();
+                selectedValuesInPreviousDropdowns = selectedValuesInPreviousDropdowns.concat(selectedValues);
+
+            });
+
+            $("#designationBasedContainerId .row").find(".selectDesignation").each(function () {
+                //$(this).multiselect('destroy');
+                var currDropdown = $(this);
+
+                if (selectedValuesInPreviousDropdowns && selectedValuesInPreviousDropdowns.length > 0) {
+                    currDropdown.find("option").each(function () {
+                        if (selectedValuesInPreviousDropdowns.includes($(this).val()) && !currDropdown.val().includes($(this).val())) {
+                            $(this).prop("disabled", true);
+                        } else {
+                            $(this).prop("disabled", false);
+                        }
+                    });
+                }
+                $(this).multiselect({ includeSelectAllOption: true });
+                $(this).multiselect('refresh');
+            });
+        });
+
+
+        // Change event to disabled the selected options in others Select Designation dropdown
+        $("#designationBasedContainerId").on('change', '.row:not(:first) .selectDesignation', function (e) {
+            var selectedValuesInPreviousDropdowns = [];
+
+            $("#designationBasedContainerId .row").find(".selectDesignation").each(function () {
+                var selectedValues = $(this).val();
+                selectedValuesInPreviousDropdowns = selectedValuesInPreviousDropdowns.concat(selectedValues);
+
+            });
+
+            $("#designationBasedContainerId .row").find(".selectDesignation").each(function () {
+                //$(this).multiselect('destroy');
+                var currDropdown = $(this);
+
+                if (selectedValuesInPreviousDropdowns && selectedValuesInPreviousDropdowns.length > 0) {
+                    currDropdown.find("option").each(function () {
+                        if (selectedValuesInPreviousDropdowns.includes($(this).val()) && !currDropdown.val().includes($(this).val())) {
+                            $(this).prop("disabled", true);
+                        } else {
+                            $(this).prop("disabled", false);
+                        }
+                    });
+                }
+                $(this).multiselect({ includeSelectAllOption: true });
+                $(this).multiselect('refresh');
+            });
+        });
+        //#endregion for Comment Type Configurations

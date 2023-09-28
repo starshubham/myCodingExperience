@@ -1,0 +1,1496 @@
+using ICap.BusinessLayer;
+using ICap.CallMinerAPI;
+using ICap.Commom;
+using ICap.Common;
+using ICap.DL;
+using ICap.Domain;
+using ICap.Models;
+using ICap.ViewModels;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
+using System;
+using System.Collections.Generic;
+using System.Configuration;
+using System.Data;
+using System.Dynamic;
+using System.IO;
+using System.Linq;
+using System.Net;
+using System.Net.Http;
+using System.Net.Http.Headers;
+using System.Text;
+using System.Threading.Tasks;
+using System.Web;
+using System.Web.Mvc;
+using System.Web.Script.Serialization;
+
+namespace ICap.Controllers
+{
+
+    public class FullAudioPlayerController : Controller
+    {
+        UserInfo ActiveUser
+        {
+            get
+            {
+                return new UserInfo();
+            }
+        }
+
+        [Route("Home/Index")]
+        [Authorize]
+        public ActionResult Index(string callId)
+        {
+            string permID = Request.QueryString["permissionid"];
+            string callIdForScoreandComment = Request.QueryString["callId"];
+            if (string.IsNullOrEmpty(callIdForScoreandComment) && TempData["callIdForScoreandComment"] != null)
+            {
+                callIdForScoreandComment = TempData["callIdForScoreandComment"].ToString();
+            }
+            if (string.IsNullOrEmpty(callId))
+            {
+                ViewBag.encryptedCallId = callIdForScoreandComment;
+            }
+            else
+            {
+                ViewBag.encryptedCallId = callId;
+            }
+
+            if (!string.IsNullOrEmpty(callIdForScoreandComment))
+            {
+                string returnURL = "https://" + HttpContext.Request.Url.Host + "/Home/Index?callId=" + callIdForScoreandComment;
+                if (!User.Identity.IsAuthenticated)
+                {
+                    return Redirect(returnURL);
+                }
+            }
+            else if (!string.IsNullOrEmpty(permID))
+            {
+                string returnURL = "https://" + HttpContext.Request.Url.Host + "/Home/Index?permissionid=" + permID;
+                if (!User.Identity.IsAuthenticated)
+                {
+                    return Redirect(returnURL);
+                }
+            }
+
+
+            return View();
+        }
+
+        [AcceptVerbs(WebRequestMethods.Http.Get, WebRequestMethods.Http.Post)]
+        public PartialViewResult FullAudioPlayerContent(FormCollection form, string encryptedCallId, Guid? permissionid, string listMetadata)
+        {
+            AssignCallToAgent permission = null;
+            if (permissionid != null && permissionid != Guid.Empty)
+            {
+                permission = new PowerBiCommentService().GetAddAssignCallToAgent(permissionid);
+                if (permission != null)
+                {
+                    encryptedCallId = permission.EncryptedCallId;
+                }
+            }
+            else
+            {
+                permission = new AssignCallToAgent()
+                {
+                    Scores = true,
+                    CommentAssignCall = true,
+                    CallEvents = true,
+                    Audio = true,
+                    DownloadAudio = true,
+                    Transcripts = true,
+                    TalkTime = true,
+                    PostComments = true,
+                    Metadata = true,
+                    Sentiments = true
+                };
+            }
+
+
+            if (string.IsNullOrEmpty(encryptedCallId))
+            {
+                ViewBag.ErrorMessage = "Call Id required..";
+                return PartialView("_FullAudioPlayerContent");
+            }
+
+            string callId = string.Empty;
+            string errorMessage = string.Empty;
+
+            if (encryptedCallId.Length <= 30)
+            {
+                string decrypted = System.Text.ASCIIEncoding.ASCII.GetString(Convert.FromBase64String(encryptedCallId));
+                int index1 = decrypted.IndexOf("EXTERNAL");
+                if (index1 != -1)
+                {
+                    callId = decrypted.Remove(index1);
+                }
+                else
+                {
+                    errorMessage = "Parameter is not correct..";
+                }
+            }
+            else
+            {
+                callId = API.Decrypt(encryptedCallId);
+            }
+
+            int clientId = 0;
+            string clientName = "";
+
+            if (Request.Form["ClientName"] != null)
+            {
+                clientId = int.Parse(Request.Form["ClientName"]);
+                clientName = new HomePowerBIServices().GetClientNameById(clientId);
+            }
+
+            var clientDetails = new HomePowerBIServices().GetPowerBiGetClientidByCallid(int.Parse(callId)).FirstOrDefault();
+
+            string userid = ActiveUser.UserId;
+
+            var clientDetail = new HomePowerBIServices().GetPowerBiGetClientidByCallidAndUserId(int.Parse(callId), userid).FirstOrDefault();
+            var clientNameByUserId = new HomePowerBIServices().GetClientNameById(clientDetail.ClientId);
+
+            var token = "";
+            var tzClientId = clientDetails.ID; //TempData["clientName"];
+            TempData.Keep();
+            //if (tzClientId == null)
+            //{
+            //    tzClientId = ActiveUser.Id;
+            //    TempData["clientName"]= ActiveUser.Id;
+            //    TempData.Keep();
+            //}
+            //var flag = new HomePowerBIServices().GetClientNameById(Convert.ToInt32(tzClientId));//check if client is tranzact
+            //ViewBag.flag = flag;
+            //var flag = ConfigurationManager.AppSettings["ClientTZ"];
+            //ViewBag.flag = flag;
+            //if (flag == "tzInstance")
+            //{
+            //    token = Task.Run(() => API.GetTZTokenAsync()).Result;
+            //}
+            //else if (flag == "FBCS")
+            //{
+            //    token = Task.Run(() => API.GetFBCSTokenAsync()).Result;
+            //}
+            //else
+            //{
+            //    token = Task.Run(() => API.GetTokenAsync()).Result;
+            //}
+            token = Task.Run(() => API.GetTokenAsync()).Result;
+            ViewBag.Token = token;
+            ViewBag.UserName = ActiveUser.Name;
+            ViewBag.ErrorMessage = errorMessage;
+            ViewBag.encryptedCallId = encryptedCallId;
+            ViewBag.callId = int.Parse(callId);
+            ViewBag.listMetadata = listMetadata;
+            ViewBag.clientId = clientDetail.ClientId;
+            ViewBag.score_CallEventsClientId = (clientId != 0) ? clientId : clientDetail.ClientId;
+            ViewBag.clientDetail = clientDetails;
+            ViewBag.Permissions = permission;
+
+
+            //var model = Task.Run(() => API.GetScoreComponentsAsync(callId, token, clientDetails.ID.ToString(), "FullAudio", clientName: clientDetails.ClientName)).Result;
+            var model = Task.Run(() => API.GetScoreComponentsAsync(callId, token, ((clientId != 0) ? clientId : clientDetail.ClientId).ToString(), "FullAudio", clientName: (clientName != "" ? clientName : clientNameByUserId))).Result;
+            //if (model != null)
+            //{
+            //    if (string.IsNullOrEmpty(model.ClientName))
+            //    {
+            //        model.ClientName = flag;
+            //    }
+            //}
+            #region Role Hierarchy for Scoring Logic
+            DataTable ReviewedByHierar = new AudioPlayer().ReviewedByUser(callId);
+            if (ReviewedByHierar != null)
+            {
+                List<ContactDetailsModel> ReviewedBy = new List<ContactDetailsModel>();
+                ViewData["ReviewedBy"] = (from DataRow dr in ReviewedByHierar.Rows
+                                          select new ContactDetailsModel()
+
+                                          {
+                                              ReviewedBy = Convert.ToInt32(dr["ReviewedBy"]),
+                                              //ComponentName = dr["ComponentName"].ToString(),
+                                              ComponentName = dr["DisplayComponentName"].ToString(),
+                                              ReviewedInternal = dr["ReviewedInternal"].ToString(),//Convert.ToInt32(dr["ReviewedInternal"])
+                                              USERID = dr["USERID"].ToString()
+                                          }).ToList();
+            }
+
+            //dynamic mergedModel = new ExpandoObject();
+            //mergedModel.ContactDetailsModel = model;
+            //mergedModel.ScoreRestriction = ReviewedBy;
+
+            ViewBag.currentRoleId = new AudioPlayer().currentRoleId(ActiveUser.UserId);
+            ViewBag.scoreUserId = ActiveUser.Id;
+            List<IcapIntegrationdetails> lsticapIntegrationdetails = new CommomServices().GetIpacsIntegrationdetailsforCall(int.Parse(callId));
+            TempData["IsIpacsIntegrationEnable"] = lsticapIntegrationdetails[0].isipacsintegration;
+            ViewBag.NonConfirmityApiKey = lsticapIntegrationdetails[0].nonconfirmityapikey;
+            //model.ReviewedByRoleHie = ReviewedByHierar;
+            //string reviewedComponentName = new AudioPlayer().GetReviewedComponent(callId);
+            //ViewBag.DisabledScores = (currentRoleId < ReviewedByHierar || ReviewedByHierar == 0) ? false : true;
+            //ViewBag.ReviewedScore = (string.IsNullOrEmpty(reviewedComponentName)) ? "" : reviewedComponentName;
+            #endregion
+            return PartialView("~/Views/FullAudioPlayer/_FullAudioPlayerContent.cshtml", model);
+
+
+
+            //var  model = new CallAnalyzerModel();
+            //string DecryptedcallId = string.Empty;
+            //    if (callId.Length <= 30)
+            //    {
+            //        string callIddecry = string.Empty;
+            //        byte[] b;
+            //        b = Convert.FromBase64String(callId);
+            //        string decrypted = System.Text.ASCIIEncoding.ASCII.GetString(b);
+            //        int index1 = decrypted.IndexOf("EXTERNAL");
+            //        if (index1 != -1)
+            //        {
+            //            callIddecry = decrypted.Remove(index1);
+            //        }
+            //        else
+            //        {
+            //            ViewBag.ErrorMessage = "Parameter is not correct..";
+            //        }
+            //        model.DecryptedCallId = callIddecry;
+            //        DecryptedcallId = callIddecry;
+            //        model.EncryptedCallId = callId;
+            //    }
+            //    else
+            //    {
+            //        model.EncryptedCallId = callId;
+            //        DecryptedcallId = API.Decrypt(callId);
+            //        model.DecryptedCallId = DecryptedcallId;
+            //    }
+
+
+            //    model.transcripts = await API.GetTranscriptAsync(DecryptedcallId, token);
+            //    model.events = await API.GetEventsByCallId(DecryptedcallId, token);
+            //    model.contactDetails = await API.GetScoreComponentsAsync(DecryptedcallId, token);
+            //    model.AudioUrl = "https://feapi.callminer.net/api/v2/playback/stream/" + DecryptedcallId + "/mp3?JWT=" + token;
+            //    model.eventrequire = EventRequireDL.GetRequireEvent();
+            //    model.displayScore = EventRequireDL.GetScore();
+
+
+            //    AnalystServices _service = new AnalystServices();
+            //    var clientId = new HomePowerBIServices().GetPowerBiGetClientidByCallid(int.Parse(DecryptedcallId)).Select(x => x.ID).FirstOrDefault();
+            #region  Metadata
+            //    var export_properties = listMetadata;
+            //    if (!string.IsNullOrEmpty(listMetadata))
+            //    {
+            //        var metaDatas = _service.GetMetaDataByClient(clientId);
+            //        var properties_data = new List<Tuple<string, string, string, string>>();
+            //        var properties = export_properties.Split(',').ToList();
+            //        properties.Remove("Agent");
+            //        properties.Remove("WAVLength");
+            //        properties.Remove("Account_Fileno");
+            //        properties.Remove("Direction");
+            //        properties.Remove("Silence_Percent");
+            //        foreach (var splitProperties in properties)
+            //        {
+            //            MetaDataModel metarecords = metaDatas.FirstOrDefault(x => x.MetaDataColumnName == splitProperties);
+            //            properties_data.Add(Tuple.Create<string, string, string, string>(metarecords.MetaDataEntityName, metarecords.MetaDataColumnName, metarecords.DisplayName, metarecords.MetaDataGroupName));
+            //        }
+
+            //        var dynamicData = _service.GetCM_STG_ExportContactByProperties
+            //               (
+            //               string.Join(",", properties_data.Select(x => x.Item2 + " as " + x.Item1)),
+            //                new int?[] { int.Parse(DecryptedcallId) }
+            //               );
+
+            //        ViewBag.metaDataColumns = properties_data;
+            //        ViewBag.metaDatas = dynamicData.FirstOrDefault();
+
+            //    }
+            #endregion
+
+
+
+        }
+
+
+
+        //public async Task CallDownloadAsync(string callId, string agent, string account, string date)
+        //{
+        //    try
+        //    {
+        //        DateTime getDatetime = DateTime.Parse(date);
+        //        string formattedDate = getDatetime.ToString("yyyy-MM-dd HH:mm:ss");
+        //        if (callId.Length <= 30)
+        //        {
+        //            string callIddecry = string.Empty;
+        //            byte[] b;
+        //            b = Convert.FromBase64String(callId);
+        //            string decrypted = System.Text.ASCIIEncoding.ASCII.GetString(b);
+        //            int index1 = decrypted.IndexOf("EXTERNAL");
+        //            if (index1 != -1)
+        //            {
+        //                callId = decrypted.Remove(index1);
+        //            }
+        //        }
+        //        else
+        //        {
+        //            callId = API.Decrypt(callId);
+        //        }
+
+
+        //        if (callId == null || callId == "" || callId == string.Empty)
+        //        {
+        //            Response.Write("Bad Request.");
+        //            return;
+        //        }
+        //        string token = await API.GetTokenAsync();
+        //        var httpResponse = await API.CallMinerGetAsync(token, "api/v2/playback/stream/" + callId + "/mp3");
+        //        var bytedata = await httpResponse.Content.ReadAsByteArrayAsync();
+        //        if (bytedata != null)
+        //        {
+        //            Response.ContentType = "audio/mp3";
+        //            Response.AppendHeader("Content-Disposition", "attachment; filename=" + agent + "_" + account + "_" + formattedDate + ".mp3");
+        //            await Response.OutputStream.WriteAsync(bytedata, 0, bytedata.Length);
+        //        }
+        //        else
+        //        {
+        //            Response.Write("Somthing went wrong please try later.");
+        //        }
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        Response.Write("Bad Request.");
+        //    }
+
+        //}
+
+        #region Partials  
+        public PartialViewResult Metadata(int callId, string token, string listMetadata, ContactDetailsModel contactDetailsModel, AssignCallToAgent permissions, int clientId = 0)
+        {
+            ViewBag.callId = callId;
+            string mdpnts = "";
+
+            ViewBag.Permissions = permissions;
+            #region Get Sentiments
+            var sentiments = new CommomServices().GetSentimentsfromDB(callId);
+            ViewBag.SentimentCompound = sentiments[0].ToString();
+            ViewBag.SentimentPositive = sentiments[1].ToString();
+            ViewBag.SentimentNegative = sentiments[2].ToString();
+            #endregion
+
+            #region  Metadata
+
+            if (!string.IsNullOrEmpty(listMetadata))
+            {
+                var _AnalystServices = new AnalystServices();
+                //var clientId = new HomePowerBIServices().GetPowerBiGetClientidByCallid(callId).Select(x => x.ID).FirstOrDefault();
+                //var client = TempData["clientName"];
+                //int clientId = Convert.ToInt32(client);
+                ViewBag.ADCols = _AnalystServices.GetAudioChkBxMetaDataByClient(clientId);
+                //if none of the metadata is being setup to be displayed on full player, set a flag so that default metadata can be displayed
+                ViewBag.DefaultMD = _AnalystServices.GetDefaultMD(clientId);
+
+                if (clientId == 0)
+                {
+                    var clientIdNew = new HomePowerBIServices().GetPowerBiGetClientidByCallid(callId).FirstOrDefault();
+                    ViewBag.ADCols = _AnalystServices.GetAudioChkBxMetaDataByClient(Convert.ToInt32(clientIdNew.ID));
+                    //if none of the metadata is being setup to be displayed on full player, set a flag so that default metadata can be displayed
+                    ViewBag.DefaultMD = _AnalystServices.GetDefaultMD(Convert.ToInt32(clientIdNew.ID));
+                }
+
+                var export_properties = listMetadata;
+
+                var metaDatas = _AnalystServices.GetMetaDataByClient(clientId);
+                var properties_data = new List<Tuple<string, string, string, string>>();
+                var properties = export_properties.Split(',').ToList();
+                properties.Remove("Agent");
+                properties.Remove("WAVLength");
+                properties.Remove("Account_Fileno");
+                properties.Remove("Direction");
+                properties.Remove("Silence_Percent");
+                foreach (var splitProperties in properties)
+                {
+                    MetaDataModel metarecords = metaDatas.FirstOrDefault(x => x.MetaDataColumnName == splitProperties);
+                    properties_data.Add(Tuple.Create<string, string, string, string>(metarecords.MetaDataEntityName, metarecords.MetaDataColumnName, metarecords.DisplayName, metarecords.MetaDataGroupName));
+                }
+
+
+                foreach (var item in ViewBag.ADCols)
+                {
+                    mdpnts += item.MetaDataColumnName + ",";
+                }
+                var dynamicData = _AnalystServices.GetCM_STG_ExportContactByProperties
+                       (string.Join(",", properties_data.Select(x => x.Item2 + " as " + x.Item1)),
+                        new int?[] { callId },
+                        mdpnts
+                       );
+
+                ViewBag.metaDataColumns = properties_data;
+                ViewBag.metaDatas = dynamicData.FirstOrDefault();
+
+            }
+            else
+            {
+
+                var _AnalystServices = new AnalystServices();
+                //var clientId = new HomePowerBIServices().GetPowerBiGetClientidByCallid(callId).Select(x => x.ID).FirstOrDefault();
+                //var client = TempData["clientName"];
+                //int clientId = Convert.ToInt32(client);
+                ViewBag.ADCols = _AnalystServices.GetAudioChkBxMetaDataByClient(clientId);
+                //if none of the metadata is being setup to be displayed on full player, set a flag so that default metadata can be displayed
+                ViewBag.DefaultMD = _AnalystServices.GetDefaultMD(clientId);
+
+                if (clientId == 0)
+                {
+                    var clientIdNew = new HomePowerBIServices().GetPowerBiGetClientidByCallid(callId).FirstOrDefault();
+                    ViewBag.ADCols = _AnalystServices.GetAudioChkBxMetaDataByClient(Convert.ToInt32(clientIdNew.ID));
+                    //if none of the metadata is being setup to be displayed on full player, set a flag so that default metadata can be displayed
+                    ViewBag.DefaultMD = _AnalystServices.GetDefaultMD(Convert.ToInt32(clientIdNew.ID));
+                }
+
+
+
+
+                foreach (var item in ViewBag.ADCols)
+                {
+                    mdpnts += item.MetaDataColumnName + ",";
+                }
+
+                var dynamicData = _AnalystServices.GetCM_STG_ExportContactByProperties((""), new int?[] { callId }, mdpnts);
+                ViewBag.metaDatas = dynamicData.FirstOrDefault();
+
+            }
+
+
+            #endregion
+
+            return PartialView("~/Views/FullAudioPlayer/Partials/_Metadata.cshtml", contactDetailsModel);
+        }
+
+        #region Audio File
+        public PartialViewResult AudioPlayer(int callId, string token, ContactDetailsModel contactDetailsModel, AssignCallToAgent permissions)
+        {
+            ViewBag.Permissions = permissions;
+            ViewBag.callId = callId;
+            var client = new HomePowerBIServices().GetPowerBiGetClientidByCallid(callId).FirstOrDefault();
+            var unredactedUrl = "";
+
+            ClientCanada canada = new ClientCanada();
+
+            // client.UnredactedUrl = "https://api.livevox.com|amsher|TMobile|TMobile@2021|21dd0648-3944-40d9-85f9-13f12673e507";
+            if (!string.IsNullOrEmpty(client.UnredactedUrl) && client.UnredactedUrl.ToLower().Contains("livevox"))
+            {
+                string json = client.UnredactedUrl;
+                string servicerName = string.IsNullOrEmpty(contactDetailsModel.Location) ? "" : contactDetailsModel.Location.ToLower();
+                int index = contactDetailsModel.ClientID.IndexOf(".mp3") == -1 ? contactDetailsModel.ClientID.Length : contactDetailsModel.ClientID.IndexOf(".mp3");
+
+                if (json.Contains("["))
+                {
+                    dynamic servicers = Newtonsoft.Json.JsonConvert.DeserializeObject<dynamic>(json);
+                    foreach (var servicer in servicers.Clients)
+                    {
+                        if (Convert.ToString(servicer.alias).ToLower() == servicerName)
+                        {
+                            unredactedUrl = servicer.LiveVoxBaseURL + "|" +
+                                            servicer.clientName + "|" +
+                                            servicer.userName + "|" +
+                                            servicer.password + "|" +
+                                            servicer.LVAccess + "|" +
+                                            contactDetailsModel.ClientID.Substring(0, index);
+                            break;
+                        }
+                    }
+                }
+                else
+                {
+
+                    unredactedUrl = client.UnredactedUrl + "|" + contactDetailsModel.ClientID.Substring(0, index);
+                }
+            }
+            else
+            {
+                unredactedUrl = client.UnredactedUrl + contactDetailsModel.ClientID;
+            }
+
+            var id = ActiveUser.Id;
+
+            var localIP = new UserSetupServices().GetLocalIP(client.ID).FirstOrDefault();
+            if (localIP.UnredactedUrl != null &&
+                (!string.IsNullOrEmpty(unredactedUrl) && !unredactedUrl.ToLower().Contains("livevox")))
+            {
+                ViewBag.audioUrl = localIP.UnredactedUrl.ToString() + unredactedUrl.Split('=')[1];
+            }
+
+            if (ActiveUser.Id > 0 && ActiveUser.IsUnredacted && client.IsUnredacted)
+            {
+                if (unredactedUrl.ToLower().Contains("livevox"))
+                {
+                    string[] lVDetails = unredactedUrl.Split('|');
+                    ViewBag.LvBaseURL = lVDetails[0];
+                    string clientName = lVDetails[1];
+                    string lvUsername = lVDetails[2];
+                    string lvPwd = lVDetails[3];
+                    ViewBag.LvAccessToken = lVDetails[4];
+                    ViewBag.LvCallId = lVDetails[5];
+                    ViewBag.LvSessionId = GetSessionIdAsync(clientName, ViewBag.LvBaseURL, lvUsername, lvPwd, ViewBag.LvAccessToken);
+                    if (ViewBag.LvSessionId == null)
+                    {
+                        ViewBag.IsUnredacted = "no";
+
+                        canada.Client = ConfigurationManager.AppSettings["CallMiner_Client"];
+
+                        if (canada.Client == "Canada")
+                        {
+                            ViewBag.audioUrl = string.Format(ConfigurationManager.AppSettings["CALLMINER_AUDIO_URL_CANADA"], callId, token);
+                        }
+                        else
+                        {
+                            ViewBag.audioUrl = string.Format(ConfigurationManager.AppSettings["CALLMINER_AUDIO_URL"], callId, token);
+                        }
+
+                    }
+                    else
+                        ViewBag.IsUnredacted = "yes";
+                }
+                else
+                {
+                    ViewBag.LvBaseURL = "";
+                    ViewBag.LvAccessToken = "";
+                    ViewBag.LvSessionId = "";
+                    ViewBag.IsUnredacted = "no";
+
+                    if (!string.IsNullOrEmpty(unredactedUrl))
+                    {
+                        if (IsHasAudioFile(unredactedUrl))
+                        {
+                            ViewBag.ClientId = contactDetailsModel.ClientID;
+                            ViewBag.IsUnredacted = "yes";
+                            ViewBag.audioUrl = "/FullAudioPlayer/GetAudioFile?url=" + unredactedUrl;
+                        }
+                        else
+                        {
+                            ViewBag.ClientId = contactDetailsModel.ClientID;
+                            ViewBag.IsUnredacted = "yes";
+                            ViewBag.audioUrl = localIP.UnredactedUrl.ToString() + unredactedUrl.Split('=')[1];
+                        }
+                    }
+                    else
+                    {
+                        ViewBag.IsUnredacted = "no";
+
+                        canada.Client = ConfigurationManager.AppSettings["CallMiner_Client"];
+
+                        if (canada.Client == "Canada")
+                        {
+                            ViewBag.audioUrl = string.Format(ConfigurationManager.AppSettings["CALLMINER_AUDIO_URL_CANADA"], callId, token);
+                        }
+                        else
+                        {
+                            ViewBag.audioUrl = string.Format(ConfigurationManager.AppSettings["CALLMINER_AUDIO_URL"], callId, token);
+                        }
+                    }
+                }
+
+            }
+            else
+            {
+                canada.Client = ConfigurationManager.AppSettings["CallMiner_Client"];
+
+                if (canada.Client == "Canada")
+                {
+                    ViewBag.audioUrl = string.Format(ConfigurationManager.AppSettings["CALLMINER_AUDIO_URL_CANADA"], callId, token);
+                }
+                else
+                {
+                    ViewBag.audioUrl = string.Format(ConfigurationManager.AppSettings["CALLMINER_AUDIO_URL"], callId, token);
+                }
+            }
+            Response.AddHeader("Accept-Ranges", "bytes");
+
+            canada.Client = ConfigurationManager.AppSettings["CallMiner_Client"];
+
+            if (canada.Client == "Canada")
+            {
+                ViewBag.inCaseErr = string.Format(ConfigurationManager.AppSettings["CALLMINER_AUDIO_URL_CANADA"], callId, token);
+            }
+            else
+            {
+                ViewBag.inCaseErr = string.Format(ConfigurationManager.AppSettings["CALLMINER_AUDIO_URL"], callId, token);
+            }
+
+            ViewBag.permissionsClient = ActiveUser.Permissions;
+
+            ViewBag.ActiveUser = ActiveUser;
+            ViewBag.ActiveRoles = ViewBag.ActiveUser.Roles;
+
+            //ViewBag.IsQA = ActiveUser.Roles == UserRoles.QA;
+            //ViewBag.IsCustomQA = ActiveUser.Roles == UserRoles.CustomQA;
+            if (ActiveUser.Roles[0] == "QA")
+            {
+                ViewBag.IsQA = true;
+            }
+            else
+            {
+                ViewBag.IsQA = false;
+            }//Custom QA can not access full player so hiding things on full player for custom qa doesnot make any sense.(Req: Sprint-3 July-2021).
+
+            // ViewBag.audioUrl = string.Format(ConfigurationManager.AppSettings["CALLMINER_AUDIO_URL"], callId, token);// "https://feapi.callminer.net/api/v2/playback/stream/" + callId + "/mp3?JWT=" + token;
+            return PartialView("~/Views/FullAudioPlayer/Partials/_AudioPlayer.cshtml", contactDetailsModel);
+        }
+        public async Task<FileResult> GetLiveVoxAudioFile(string baseURL, string accessToken, string sessionId, string callId)
+        {
+            // callId = "35a263f9-7171-b28d-d911-0177fd55d97d";
+            var resRecording = await LiveVoxGetAsync(baseURL, "compliance/recording/" + callId, sessionId, accessToken);
+            return GetLVAudioFile(resRecording);
+        }
+
+        [HttpGet]
+        public FileResult GetLVAudioFile(byte[] bytedata)
+        {
+
+            try
+            {
+                // byte[] song = db.UploadedSongs.Where(x => x.Id == id).FirstOrDefault().SongBytes;
+                long fSize = bytedata.Length;
+                long startbyte = 0;
+                long endbyte = fSize - 1;
+                int statusCode = 200;
+                if ((Request.Headers["Range"] != null))
+                {
+                    //Get the actual byte range from the range header string, and set the starting byte.
+                    string[] range = Request.Headers["Range"].Split(new char[] { '=', '-' });
+                    startbyte = Convert.ToInt64(range[1]);
+                    if (range.Length > 2 && range[2] != "") endbyte = Convert.ToInt64(range[2]);
+                    //If the start byte is not equal to zero, that means the user is requesting partial content.
+                    if (startbyte != 0 || endbyte != fSize - 1 || range.Length > 2 && range[2] == "")
+                    { statusCode = 206; }//Set the status code of the response to 206 (Partial Content) and add a content range header.                                    
+                }
+                long desSize = endbyte - startbyte + 1;
+                //Headers
+                Response.StatusCode = statusCode;
+
+                Response.ContentType = "audio/mp3";
+                Response.AddHeader("Content-Accept", Response.ContentType);
+                Response.AddHeader("Content-Length", desSize.ToString());
+                Response.AddHeader("Content-Range", string.Format("bytes {0}-{1}/{2}", startbyte, endbyte, fSize));
+                //Data
+
+                var stream = new MemoryStream(bytedata, (int)startbyte, (int)desSize);
+
+                return new FileStreamResult(stream, Response.ContentType);
+
+            }
+            catch (Exception ex)
+            {
+                return null;
+            }
+        }
+
+
+        [NonAction]
+        public static async Task<byte[]> LiveVoxGetAsync(string lvBaseAddress, string uri, string lvSessionId, string lvAccessToken)
+        {
+
+
+            using (var handler = new HttpClientHandler())
+            {
+                using (var client = new HttpClient(handler))
+                {
+                    client.Timeout = TimeSpan.FromHours(1);
+                    client.BaseAddress = new Uri(lvBaseAddress);
+                    client.DefaultRequestHeaders.Accept.Clear();
+                    client.DefaultRequestHeaders.Add("LV-Access", lvAccessToken);
+                    client.DefaultRequestHeaders.Add("LV-Session", lvSessionId);
+
+                    //StringContent content = new StringContent(Newtonsoft.Json.JsonConvert.SerializeObject(jsonObj), Encoding.UTF8, "application/json");
+                    byte[] response = await client.GetByteArrayAsync(uri);
+                    if (response != null)
+                    {
+                        return response;
+
+                    }
+                    return null;
+                }
+
+
+            }
+
+
+        }
+
+
+        [NonAction]
+        private string GetSessionIdAsync(string clientName, string url, string userName, string pwd, string accessToken)
+        {
+            try
+            {
+                string sessionId = string.Empty;
+
+                //  LoginModel obj = new LoginModel { clientName = "FRM", userName = "Provana", password = "SeqProv01!" };
+
+                var loginDetails = new { clientName = clientName, userName = userName, password = pwd };
+
+                using (var handler = new HttpClientHandler())
+                {
+                    using (var client = new HttpClient(handler))
+                    {
+                        //ServicePointManager.DefaultConnectionLimit = 9999;
+                        //ServicePointManager.SecurityProtocol = SecurityProtocolType.Ssl3 | SecurityProtocolType.Tls | SecurityProtocolType.Tls11 | SecurityProtocolType.Tls12;
+                        client.Timeout = TimeSpan.FromHours(1);
+                        client.BaseAddress = new Uri(url);
+                        client.DefaultRequestHeaders.Accept.Clear();
+                        client.DefaultRequestHeaders.Add("LV-Access", accessToken);//"def01bae-8a99-4207-94e2-61874a2c6fcb");
+                        client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+
+                        StringContent content = new StringContent(Newtonsoft.Json.JsonConvert.SerializeObject(loginDetails),
+                            Encoding.UTF8, "application/json");
+
+                        var response = client.PostAsync("session/login", content).GetAwaiter().GetResult();
+                        var resObj = JsonConvert.DeserializeObject<dynamic>(response.Content.ReadAsStringAsync().GetAwaiter().GetResult());
+
+                        return resObj.sessionId;
+
+
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+
+            }
+            return null;
+        }
+
+
+        [NonAction]
+        private bool IsHasAudioFile(string url)
+        {
+            var flag = false;
+            try
+            {
+                var httpResponse = Task.Run(() => API.GetMothodAsync(url)).Result;
+                var str = Task.Run(() => httpResponse.Content.ReadAsStringAsync()).Result;
+                var bytedata = Task.Run(() => httpResponse.Content.ReadAsByteArrayAsync()).Result;
+                if (str != null && !str.Contains("<error>") && bytedata != null)
+                {
+                    flag = true;
+                }
+            }
+            catch
+            {
+                flag = false;
+            }
+            return flag;
+        }
+
+        [HttpGet]
+        public async Task<FileResult> GetAudioFile(string url)
+        {
+
+            try
+            {
+                var httpResponse = await API.GetMothodAsync(url);
+                var bytedata = await httpResponse.Content.ReadAsByteArrayAsync();
+
+
+                // byte[] song = db.UploadedSongs.Where(x => x.Id == id).FirstOrDefault().SongBytes;
+                long fSize = bytedata.Length;
+                long startbyte = 0;
+                long endbyte = fSize - 1;
+                int statusCode = 200;
+                if ((Request.Headers["Range"] != null))
+                {
+                    //Get the actual byte range from the range header string, and set the starting byte.
+                    string[] range = Request.Headers["Range"].Split(new char[] { '=', '-' });
+                    startbyte = Convert.ToInt64(range[1]);
+                    if (range.Length > 2 && range[2] != "") endbyte = Convert.ToInt64(range[2]);
+                    //If the start byte is not equal to zero, that means the user is requesting partial content.
+                    if (startbyte != 0 || endbyte != fSize - 1 || range.Length > 2 && range[2] == "")
+                    { statusCode = 206; }//Set the status code of the response to 206 (Partial Content) and add a content range header.                                    
+                }
+                long desSize = endbyte - startbyte + 1;
+                //Headers
+                Response.StatusCode = statusCode;
+
+                Response.ContentType = "audio/mp3";
+                Response.AddHeader("Content-Accept", Response.ContentType);
+                Response.AddHeader("Content-Length", desSize.ToString());
+                Response.AddHeader("Content-Range", string.Format("bytes {0}-{1}/{2}", startbyte, endbyte, fSize));
+                //Data
+
+                var stream = new MemoryStream(bytedata, (int)startbyte, (int)desSize);
+
+                return new FileStreamResult(stream, Response.ContentType);
+
+            }
+            catch (Exception ex)
+            {
+                return null;
+            }
+
+
+
+
+        }
+
+
+        [AllowAnonymous]
+        //[CheckSessionOut]
+        public async Task CallDownloadAsync(string callId, string agent, string account, string date, string clientId, string audioType, string isUnredacted = "no")
+        {
+            try
+            {
+                var clientDetails = new HomePowerBIServices().GetPowerBiGetClientidByCallid(int.Parse(callId)).FirstOrDefault();
+
+                var tzClientId = clientDetails.ID;// TempData["clientName"];
+                TempData.Keep();
+                //var flag = new HomePowerBIServices().GetClientNameById(Convert.ToInt32(tzClientId));//check if client is tranzact
+                //ViewBag.flag = flag;
+                var flag = ConfigurationManager.AppSettings["ClientTZ"];
+                ViewBag.flag = flag;
+                if (flag == "tzInstance")
+                {
+                    string calls = callId + "EXTERNAL";
+                    byte[] b1 = System.Text.ASCIIEncoding.ASCII.GetBytes(calls);
+                    callId = Convert.ToBase64String(b1);
+                }
+
+
+                DateTime getDatetime = DateTime.Parse(date);
+                string formattedDate = getDatetime.ToString("yyyy-MM-dd HH:mm:ss");
+                if (callId.Length <= 30)
+                {
+                    string callIddecry = string.Empty;
+                    byte[] b;
+                    b = UTF8Encoding.UTF8.GetBytes(callId);// Convert.FromBase64String(callId);
+                    string decrypted = System.Text.ASCIIEncoding.ASCII.GetString(b);
+                    int index1 = decrypted.IndexOf("EXTERNAL");
+                    if (index1 != -1)
+                    {
+                        callId = decrypted.Remove(index1);
+                    }
+                }
+                else
+                {
+                    callId = API.Decrypt(callId);
+                }
+
+
+                if (callId == null || callId == "" || callId == string.Empty)
+                {
+                    Response.Write("Bad Request.");
+                    return;
+                }
+
+
+                System.Net.Http.HttpResponseMessage httpResponse = null;
+                string token = string.Empty;
+
+                //download available only from callminer
+                //if (flag == "tzInstance")
+                //{
+                //    token = await API.GetTZTokenAsync();
+                //    httpResponse = await API.CallMinerGetAsync(token, "api/v2/playback/stream/" + callId + "/" + audioType);
+                //    //httpResponse = await API.CallMinerGetAsync(token, "api/v2/playback/stream/" + callId + "/mp3");
+                //}
+                //else if (flag == "FBCS")
+                //{
+                //    token = await API.GetFBCSTokenAsync();
+                //    httpResponse = await API.CallMinerGetAsync(token, "api/v2/playback/stream/" + callId + "/" + audioType);
+                //    //httpResponse = await API.CallMinerGetAsync(token, "api/v2/playback/stream/" + callId + "/mp3");
+                //}
+                //else
+                //{
+                //    token = await API.GetTokenAsync();
+                //    httpResponse = await API.CallMinerGetAsync(token, "api/v2/playback/stream/" + callId + "/" + audioType);
+                //    //httpResponse = await API.CallMinerGetAsync(token, "api/v2/playback/stream/" + callId + "/mp3");
+                //}
+                token = await API.GetTokenAsync();
+                httpResponse = await API.CallMinerGetAsync(token, "api/v2/playback/stream/" + callId + "/" + audioType);
+                //underacted calls were getting downloaded therefore, commented below code
+                //if (isUnredacted == "yes")
+                //{
+                //    AnalystServices _service = new AnalystServices();
+                //    var client = new HomePowerBIServices().GetPowerBiGetClientidByCallid(int.Parse(callId)).FirstOrDefault();
+
+                //    string Url = client.UnredactedUrl + clientId;
+
+                //    httpResponse = await API.GetMothodAsync(Url);
+                //}
+                //else
+                //{
+                //    if (flag == "Tranzact")
+                //    {
+                //        token = await API.GetTZTokenAsync();
+                //        httpResponse = await API.CallMinerGetAsync(token, "api/v2/playback/stream/" + callId + "/mp3");
+                //    }
+                //    else
+                //    {
+                //        token = await API.GetTokenAsync();
+                //        httpResponse = await API.CallMinerGetAsync(token, "api/v2/playback/stream/" + callId + "/mp3");
+                //    }
+                //}
+
+
+
+
+                var bytedata = await httpResponse.Content.ReadAsByteArrayAsync();
+                if (bytedata != null)
+                {
+                    Response.ContentType = "audio/" + audioType;
+                    //Response.ContentType = "audio/mp3";
+                    Response.AppendHeader("Content-Disposition", "attachment; filename=" + agent + "_" + account + "_" + formattedDate + "." + audioType);
+                    //Response.AppendHeader("Content-Disposition", "attachment; filename=" + agent + "_" + account + "_" + formattedDate + ".mp3");
+                    await Response.OutputStream.WriteAsync(bytedata, 0, bytedata.Length);
+                }
+                else
+                {
+                    Response.Write("Something went wrong please try later.");
+                }
+            }
+            catch (Exception ex)
+            {
+                Response.Write("Bad Request.");
+            }
+
+        }
+        #endregion
+
+
+
+
+        public PartialViewResult Transcripts(int callId, string token)
+        {
+            ViewBag.callId = callId;
+            UserSetupServices uss = new UserSetupServices();
+            var clientDetails = new HomePowerBIServices().GetPowerBiGetClientidByCallid(callId).FirstOrDefault();
+
+            ViewBag.permissionsClient = ActiveUser.Permissions;
+            //  ViewBag.IsUserTypeInternal = ActiveUser.UserType == UserTypes.Internal;
+            var transcripts = Task.Run(() => API.GetTranscriptAsync(callId.ToString(), token)).Result;
+
+            ViewBag.ClientName = new HomePowerBIServices().GetClientNameById(clientDetails.ID);
+            return PartialView("~/Views/FullAudioPlayer/Partials/_Transcripts.cshtml", transcripts);
+        }
+
+        public PartialViewResult CallEvents(int callId, string token, int clientId)
+        {
+            ViewBag.callId = callId;
+            ViewBag.EventRequires = EventRequireDL.GetRequireEvent();
+
+            var clientDetails = new HomePowerBIServices().GetPowerBiGetClientidByCallid(callId).FirstOrDefault();
+
+            //var tzClientId = clientDetails.ID;// TempData["clientName"];
+            var tzClientId = clientId;
+            TempData.Keep();
+            var flag = new HomePowerBIServices().GetClientNameById(Convert.ToInt32(tzClientId));//check if client is tranzact
+            ViewBag.flag = flag;
+
+            CallAnalyzerModel model = new CallAnalyzerModel();
+
+            List<EventOrderByModel> lstEvent = new AudioPlayer().GetCallEvents(clientId, callId.ToString(), model, token);
+            lstEvent.OrderBy(s => s.TotalSeconds).ToList();
+
+            //#region Get Sentiments
+            //var sentiments = new CommomServices().GetSentimentsfromDB(callId);
+            //ViewBag.SentimentCompound = sentiments[0].ToString();
+            //ViewBag.SentimentPositive = sentiments[1].ToString();
+            //ViewBag.SentimentNegative = sentiments[2].ToString();
+            //#endregion
+
+            return PartialView("~/Views/FullAudioPlayer/Partials/_CallEvents.cshtml", lstEvent);
+        }
+
+        public PartialViewResult TalkTimeDistribution(int callId, string token, ContactDetailsModel contactDetailsModel)
+        {
+            ViewBag.callId = callId;
+            var transcripts = Task.Run(() => API.GetTranscriptAsync(callId.ToString(), token)).Result;
+
+
+            ViewBag.AgentCountWord = transcripts.Count(x => x.SpeakerDescription == "Agent");
+            ViewBag.MonoCountWord = transcripts.Count(x => x.SpeakerDescription == "Mono");
+            ViewBag.CustomerCountWord = transcripts.Count(x => (x.SpeakerDescription != "Agent" && x.SpeakerDescription != "Mono"));
+
+
+            return PartialView("~/Views/FullAudioPlayer/Partials/_TalkTimeDistribution.cshtml", contactDetailsModel);
+        }
+
+
+        #region
+
+        public PartialViewResult Scores(int callId, string token, int clientId, string clientName)
+        {
+
+            //ViewBag.Per = ActiveUser.PermissionVM;
+            //  var per = ActiveUser.PermissionVM;
+            ViewBag.tzRBK = ActiveUser.PermissionVM.PermissionRoot.Any(x => x.Value == 1 && ((x.ClientExclusion + "").ToUpper().Contains((clientName + "").ToUpper()) == false && (x.PageName + "").ToUpper() == "FULLAUDIOPLAYER" && (x.FeatureName + "").ToUpper() == "TZROLLBACK"));
+
+
+            //if (!string.IsNullOrEmpty(ActiveUser.IsTZRollback))
+            //{
+            //    ViewBag.IsTZRollback = ActiveUser.IsTZRollback;
+            //    Root2 deserTZRBK = JsonConvert.DeserializeObject<Root2>(ActiveUser.IsTZRollback);
+            //    if (deserTZRBK.PermissionRoot[0].FeatureName == "tzRollback" && deserTZRBK.PermissionRoot[0].Value == 1)
+            //    {
+            //        ViewBag.tzRBK = true;
+            //    }
+            //    else
+            //    {
+            //        ViewBag.tzRBK = false;
+            //    }
+            //}
+
+            //Root2 deserializedClientPermi = JsonConvert.DeserializeObject<Root2>(ActiveUser.Permissions);
+            //string permiStr = "";
+            //if (deserializedClientPermi != null)
+            //{
+            //    foreach (var item in deserializedClientPermi.PermissionRoot.ToList())
+            //    {
+            //        if (item.PageName != "Scores")
+            //        {
+            //            deserializedClientPermi.PermissionRoot.Remove(item);
+            //        }
+            //    }
+            //    permiStr = JsonConvert.SerializeObject(deserializedClientPermi);
+            //}
+            ViewBag.ClientName = clientName;
+            ViewBag.callId = callId;
+            ViewBag.clientId = clientId;
+            ViewBag.UserName = ActiveUser.Name;
+            ViewBag.UserType = ActiveUser.UserType;
+            ViewBag.IsUserTypeInternal = ActiveUser.UserType == UserTypes.Internal;
+            //ViewBag.permissionsClient = permiStr;
+            var componentIds = new HomePowerBIServices().GetComponentIds(clientId);
+            //callID, ComponentID, commentfilter, FilterBy, Score, validval
+            var datacomponents = new AnalystServices().GetAnalystDataComp(callId + "", string.Join(",", componentIds), null, null, null, null, clientId);
+
+            DataTable ReviewedByHierar = new AudioPlayer().ReviewedByUser(callId.ToString());
+            if (ReviewedByHierar != null)
+            {
+                List<ContactDetailsModel> ReviewedBy = new List<ContactDetailsModel>();
+                ViewData["ReviewedBy"] = (from DataRow dr in ReviewedByHierar.Rows
+                                          select new ContactDetailsModel()
+
+                                          {
+                                              ReviewedBy = Convert.ToInt32(dr["ReviewedBy"]),
+                                              //ComponentName = dr["ComponentName"].ToString(),
+                                              ComponentName = dr["DisplayComponentName"].ToString(),
+                                              ReviewedInternal = dr["ReviewedInternal"].ToString(),//Convert.ToInt32(dr["ReviewedInternal"])
+                                              USERID = dr["USERID"].ToString()
+                                          }).ToList();
+            }
+
+            ViewBag.currentRoleId = new AudioPlayer().currentRoleId(ActiveUser.UserId);
+            ViewBag.scoreUserId = ActiveUser.Id;
+            ViewBag.commentTypes = new AudioPlayer().BindCommentType();
+            ViewBag.commentTypesByClientId = new AudioPlayer().BindCommentType(clientId);
+
+            var _AssignClientServices = new AssignClientServices();
+            ViewBag.CommentTypeConfig = _AssignClientServices.GetCommentTypeConfig(clientId);
+
+            return PartialView("~/Views/FullAudioPlayer/Scores/_Scores.cshtml", datacomponents);
+        }
+
+        public ActionResult ValidatClientPin(string pin, int callId)
+        {
+            var resultVM = new ResultVM();
+            try
+            {
+                var affectedData = new HomePowerBIServices().ValidatClientPin(pin, callId);
+                if (!string.IsNullOrEmpty(affectedData))
+                {
+                    resultVM.Data = affectedData;
+                    resultVM.IsSuccess = true;
+                }
+                else
+                {
+                    resultVM.Message = "Invalid pin.";
+                }
+            }
+            catch (Exception ex)
+            {
+                resultVM.Error = ex;
+                Helper.LogException(ex, "HomePowerBIController_ValidatClientPin");
+            }
+            return Json(resultVM, JsonRequestBehavior.AllowGet);
+        }
+
+        //[HttpPost]
+        public ActionResult EditComponentWeight(string data)
+        {
+            var js = new JavaScriptSerializer();
+            PowerBIComponentVM argObj = js.Deserialize<PowerBIComponentVM>(data);
+            var resultVM = new ResultVM();
+            try
+            {
+                PowerBiCommentService obService = new PowerBiCommentService();
+                var _service = new AnalystServices();// HomePowerBIServices();
+                int result = 0;
+                var today = obService.GetValidTimeByClientAndDate(argObj.ClientName, DateTime.UtcNow) ?? DateTime.UtcNow;//  DateTime.Now;
+                DateTime utc = today;
+                string url = "https://" + HttpContext.Request.Url.Host + "/Home/Index?callId=" + argObj.EncryptedCallId;
+
+                string commentedBy = argObj.AgentName;
+                string callId = string.Empty;
+                string commentMessage = "";// argObj.Comments;
+                List<string> messageArray = new List<string>();
+
+
+
+
+                StringBuilder sb = new StringBuilder();
+
+                foreach (var obj in argObj.PowerBIComponentItemsVM)
+                {
+                    obj.updateWeight = (obj.updateWeight == null ? "N/A" : obj.updateWeight);//Updated Score
+                    obj.Weight = (obj.Weight == null ? "N/A" : obj.Weight);//Previous weight
+
+                    //obj.commentID = 0;
+                    string actualweight = string.Empty;
+                    actualweight = obj.Weight;
+                    callId = obj.callId;
+
+                    string commentType = obj.commentType;
+
+                    messageArray.Add(obj.comment);
+
+                    var ReviewedBy = new AudioPlayer().currentRoleId(ActiveUser.UserId);
+                    var client = new HomePowerBIServices().GetPowerBiGetClientidByCallid(Convert.ToInt32(callId)).FirstOrDefault();
+
+                    if (obj.valid == 0)
+                    {
+                        result = _service.UpdateComponent(obj.callId, obj.ComponentId, obj.updateWeight, obj.comment, obj.commentID ?? "0", argObj.AgentName, obj.valid, actualweight, ActiveUser.Id, commentType, ReviewedBy.ToString(), Convert.ToInt32(client.ID), obj.commentTypeText);
+                        //result = _service.UpdateComponent(obj.callId, obj.ComponentId, obj.updateWeight, obj.comment, obj.commentID ?? 0, argObj.AgentName, obj.valid, actualweight, ActiveUser.Id, "S");
+                        //result = _service.UpdateComponent(obj.callId, obj.ComponentId, obj.updateWeight, argObj.Comments, obj.commentID, argObj.AgentName, obj.valid, actualweight, ActiveUser.Id, "S");
+
+                    }
+                    else
+                    {
+                        result = _service.UpdateComponent(obj.callId, obj.ComponentId, obj.Weight, obj.comment, obj.commentID ?? "0", argObj.AgentName, obj.valid, actualweight, ActiveUser.Id, commentType, ReviewedBy.ToString(), Convert.ToInt32(client.ID), obj.commentTypeText);
+                        //result = _service.UpdateComponent(obj.callId, obj.ComponentId, obj.Weight, obj.comment, obj.commentID ?? 0, argObj.AgentName, obj.valid, actualweight, ActiveUser.Id, "S");
+                        //result = _service.UpdateComponent(obj.callId, obj.ComponentId, obj.Weight, argObj.Comments, obj.commentID, argObj.AgentName, obj.valid, actualweight, ActiveUser.Id, "S");
+                    }
+
+                    if (obj.updateWeight != actualweight)
+                    {
+                        sb.Append("<tr>");
+                        sb.Append("<td style ='background:#eee; font-size: 14px; padding: 5px; color:#000; border-right:1px solid #fff; border-top:solid 1px #fff; text-align:center;'>");
+                        sb.Append(obj.componentName);
+                        sb.Append("</td>");
+
+                        //Previous score td
+
+                        sb.Append(@"<td style ='background:#eee; font-size: 14px; padding: 5px; color:#000; border-right:1px solid #fff; border-top:solid 1px #fff; text-align:center;'>");
+                        sb.Append(obj.Weight);
+                        sb.Append("</td>");
+
+                        //Updated Score Td
+
+                        sb.Append(@"<td style ='background:#eee; font-size: 14px; padding: 5px; color:#000; border-right:1px solid #fff; border-top:solid 1px #fff; text-align:center;'>");
+                        sb.Append(obj.updateWeight);
+                        sb.Append("</td>");
+                    }
+                }
+
+                commentMessage = string.Join(", ", commentMessage);
+
+                #region score restrictions
+                DataTable ReviewedByHierar = new AudioPlayer().ReviewedByUser(callId.ToString());
+                if (ReviewedByHierar != null)
+                {
+                    List<ContactDetailsModel> ReviewedBy = new List<ContactDetailsModel>();
+                    ViewData["ReviewedBy"] = (from DataRow dr in ReviewedByHierar.Rows
+                                              select new ContactDetailsModel()
+
+                                              {
+                                                  ReviewedBy = Convert.ToInt32(dr["ReviewedBy"]),
+                                                  //ComponentName = dr["ComponentName"].ToString(),
+                                                  ComponentName = dr["DisplayComponentName"].ToString(),
+                                                  ReviewedInternal = dr["ReviewedInternal"].ToString(),//Convert.ToInt32(dr["ReviewedInternal"])
+                                                  USERID = dr["USERID"].ToString()
+                                              }).ToList();
+                }
+
+                ViewBag.currentRoleId = new AudioPlayer().currentRoleId(ActiveUser.UserId);
+                ViewBag.scoreUserId = ActiveUser.Id;
+                #endregion
+
+                if (!string.IsNullOrEmpty(sb.ToString()))
+                {
+
+                    List<PowerBIClientNotificationEmai> recipient = obService.GetClientNotificationRecipient(int.Parse(callId));
+
+                    if (ActiveUser.UserType == UserTypes.External && recipient.FirstOrDefault()?.IsSsoEnable == true && !string.IsNullOrEmpty(recipient.FirstOrDefault()?.SsoConfig))
+                    {
+                        url = "https://" + HttpContext.Request.Url.Host + "/Account/Login/" + recipient.FirstOrDefault()?.ClientCode + "?callId=" + argObj.EncryptedCallId;
+                    }
+
+                    ScoreUpdateNotificationEmail obEmail = new ScoreUpdateNotificationEmail { AccountNumber = argObj.AccountNumber, AgencyName = argObj.AgencyName, Collector = argObj.Collector, DateOfMessage = today.ToShortDateString(), ClientCaptureDate = DateTime.Parse(argObj.ClientCaptureDate).ToString("MM/dd/yy hh:mm tt") };
+                    // string msgBody = SendEmail.PopulateScoreUpdateNotification(commentedBy, string.Empty, callId.ToString(),Common.SendEmail.UTCToCst(utc).ToString("MM/dd/yy hh:mm tt"), url, sb.ToString(), commentMessage, false, obEmail);
+                    string msgBody = SendEmail.PopulateScoreUpdateNotification(commentedBy, string.Empty, callId.ToString(), utc.ToString("MM/dd/yy hh:mm tt"), url, sb.ToString(), commentMessage, false, obEmail);
+                    var Client = ConfigurationManager.AppSettings["CallMiner_FBCSS"];
+                    string subject = "";
+                    if (Client == "FBCS")
+                    {
+                        subject = "ICAP – Call update | " + Client + " | Call ID – " + callId;
+                    }
+                    else
+                    {
+                        subject = "ICAP – Call update | " + argObj.ClientName + " | Call ID – " + callId;
+                    }
+                    //List<PowerBIClientNotificationEmai> recipient = obService.GetNotificationRecipient(int.Parse(callId));
+
+                    foreach (var item in recipient)
+                    {
+                        SendEmail.SendScoreNotificationMessage(item.Email, subject, msgBody);
+                    }
+                }
+                resultVM.IsSuccess = true;
+            }
+            catch (Exception ex)
+            {
+                resultVM.Error = ex.ToString();
+                Helper.LogException(ex, "HomePowerBIController_EditComponentWeight");
+            }
+            return Json(resultVM, JsonRequestBehavior.AllowGet);
+        }
+
+        #endregion
+
+        #region Comments
+        [AllowAnonymous]
+        [HttpPost]
+        public JsonResult AddPowerBiComment(BICommentModel obj)
+        {
+            var resultVM = new ResultVM();
+            var obService = new PowerBiCommentService();
+            var today = obService.GetValidTimeByClientAndDate(obj.ClientName, DateTime.UtcNow) ?? DateTime.UtcNow; ;
+           
+            if (ModelState.IsValid)
+            {
+                #region Comment Section
+                obj.CommentType = "C";
+                //var res = obService.AddComment(0,0,obj, (ActiveUser.Id == 0 ? null : (int?)ActiveUser.Id));
+
+                foreach (var item in obj.ScoreCompnts)
+                {
+                    var res = obService.AddComment((item.scorecomponentid != 0 ? item.scorecomponentid : null), item.commentTypeText, obj, (ActiveUser.Id == 0 ? null : (int?)ActiveUser.Id));
+                }
+
+                var Client = ConfigurationManager.AppSettings["CallMiner_FBCSS"];
+                string subject = "";
+                if (Client == "FBCS")
+                {
+                    subject = "ICAP – Call update | " + Client + " | Call ID – " + obj.CallId;
+                }
+                else
+                {
+                    subject = "ICAP – Call update | " + obj.ClientName + " | Call ID – " + obj.CallId;
+                }
+
+
+
+                var recipient = obService.GetClientNotificationRecipient(obj.CallId);
+                string callUrl = "https://" + HttpContext.Request.Url.Host + "/Home/Index?callId=" + obj.EncryptedCallId;
+                if (ActiveUser.UserType == UserTypes.External && recipient.FirstOrDefault()?.IsSsoEnable == true && !string.IsNullOrEmpty(recipient.FirstOrDefault()?.SsoConfig))
+                {
+                    callUrl = "https://" + HttpContext.Request.Url.Host + "/Account/Login/" + recipient.FirstOrDefault()?.ClientCode + "?callId=" + obj.EncryptedCallId;
+                }
+
+                var obEmail = new ScoreUpdateNotificationEmail { AccountNumber = obj.AccountNumber, AgencyName = obj.AgencyName, Collector = obj.Collector, DateOfMessage = today.ToShortDateString(), ClientCaptureDate = DateTime.Parse(obj.ClientCaptureDate).ToString("MM/dd/yy hh:mm tt") };
+                string msgBody = SendEmail.PopulateScoreUpdateNotification(obj.CommentedBy, string.Empty, obj.CallId.ToString(), today.ToString("MM/dd/yy hh:mm tt"), callUrl, string.Empty, obj.CommentMessage, true, obEmail);
+
+                foreach (var item in recipient)
+                {
+                    SendEmail.SendScoreNotificationMessage(item.Email, subject, msgBody);
+                }
+                #endregion
+
+                resultVM.IsSuccess = true;
+                return Json(resultVM, JsonRequestBehavior.AllowGet);
+            }
+            else
+            {
+                string messages = string.Join("; ", ModelState.Values
+                                        .SelectMany(x => x.Errors)
+                                        .Select(x => x.ErrorMessage));
+                resultVM.Message = messages;
+                return Json(resultVM, JsonRequestBehavior.AllowGet);
+            }
+
+        }
+
+        [AllowAnonymous]
+        public PartialViewResult GetPowerBIComment(int callId)
+        {
+            var obj = new PowerBiCommentService();
+            return PartialView("~/Views/FullAudioPlayer/Comments/_ListComment.cshtml", obj.GetCommentByCallerId(callId));
+        }
+        #endregion
+
+        public PartialViewResult Comments(int callId, string token, AssignCallToAgent permissions, int clientId)
+        {
+            ViewBag.Permissions = permissions;
+            ViewBag.callId = callId;
+            ViewBag.UserName = ActiveUser.Name;
+            ViewBag.Designation = ActiveUser.DesignationId;
+
+            var componentIds = new HomePowerBIServices().GetComponentIds(clientId);
+            //callID, ComponentID, commentfilter, FilterBy, Score, validval
+            var datacomponents = new AnalystServices().GetAnalystDataComp(callId + "", string.Join(",", componentIds), null, null, null, null, clientId);
+
+            ViewBag.datacomponents = datacomponents;
+
+            ViewBag.CommentTypes = new AudioPlayer().BindCommentType();
+            ViewBag.commentTypesByClientId = new AudioPlayer().BindCommentType(clientId);
+                   
+            return PartialView("~/Views/FullAudioPlayer/Comments/_Comments.cshtml");
+        }
+        #endregion
+
+
+        #region Assign Calls
+        [AllowAnonymous]
+        [HttpPost]
+        public JsonResult AddAssignCall(BICommentModel obj)
+        {
+            var resultVM = new ResultVM();
+            var obService = new PowerBiCommentService();
+            var today = obService.GetValidTimeByClientAndDate(obj.ClientName, DateTime.UtcNow) ?? DateTime.UtcNow; ;
+
+            if (ModelState.IsValid)
+            {
+                var commentTypes = new AudioPlayer().BindCommentType();
+                int commentTypeTextId = commentTypes.Count == 1 ? commentTypes[0].Id : 2;
+                obj.CommentType = "A";
+                var res = obService.AddComment(0, commentTypeTextId, obj, (ActiveUser.Id == 0 ? null : (int?)ActiveUser.Id));
+                int historyId = 0;
+                int.TryParse(res, out historyId);
+
+                string loginUrl = "https://" + HttpContext.Request.Url.Host + "/Account/Login";
+                var obEmail = new ScoreUpdateNotificationEmail { AccountNumber = obj.AccountNumber, AgencyName = obj.AgencyName, Collector = obj.Collector, DateOfMessage = today.ToShortDateString(), ClientCaptureDate = DateTime.Parse(obj.ClientCaptureDate).ToString("MM/dd/yy hh:mm tt") };
+
+                var Client = ConfigurationManager.AppSettings["CallMiner_FBCSS"];
+                string subject = "";
+                if (Client == "FBCS")
+                {
+                    subject = "ICAP – Assigned Call | " + Client + " | Call ID – " + obj.CallId;
+                }
+                else
+                {
+                    subject = "ICAP – Assigned Call | " + obj.ClientName + " | Call ID – " + obj.CallId;
+                }
+
+                #region Send Assign Email
+                if (!string.IsNullOrEmpty(obj.AgentEmail))
+                {
+                    var recipient2 = obj.AgentEmail.Split(',');
+                    foreach (var email in recipient2)
+                    {
+                        obj.AgentId = (ActiveUser.Id == 0 ? null : (int?)ActiveUser.Id);
+                        obj.AgentEmail = email;
+                        var id = obService.AddAssignCallToAgent(obj, historyId, today);
+                        //callUrl = callUrl + id;
+                        string callUrl = "https://" + HttpContext.Request.Url.Host + "/Home/Index?permissionid=" + id;
+                        loginUrl = loginUrl + "?permissionid=" + id;
+                        //string msgBody2 = SendEmail.PopulateScoreUpdateNotification(obj.CommentedBy, string.Empty, obj.CallId.ToString(), today.ToString("MM/dd/yy hh:mm tt"), callUrl, string.Empty, obj.CommentMessage, true, obEmail);
+                        string msgBody2 = SendEmail.PopulateScoreUpdateNotificationAssignCalls(obj.CommentedBy, string.Empty, obj.CallId.ToString(), today.ToString("MM/dd/yy hh:mm tt"), callUrl, string.Empty, obj.CommentMessage, true, obEmail, loginUrl);
+
+
+                        SendEmail.SendScoreNotificationMessage(email, subject, msgBody2);
+                        resultVM.Data = id;
+                    }
+
+                }
+                #endregion
+
+                resultVM.IsSuccess = true;
+                return Json(resultVM, JsonRequestBehavior.AllowGet);
+            }
+            else
+            {
+                string messages = string.Join("; ", ModelState.Values
+                                        .SelectMany(x => x.Errors)
+                                        .Select(x => x.ErrorMessage));
+                resultVM.Message = messages;
+                return Json(resultVM, JsonRequestBehavior.AllowGet);
+            }
+
+        }
+        #endregion
+
+       [HttpGet]
+       
+        public JsonResult GetIPACSHistoryData(int clientId,int CallId,string fromDate,string toDate, string AudioPlayerType)
+        {
+            var resultVM = new ResultVM();
+            var result = new CommomServices().GetIPACSHistory(clientId, CallId, fromDate, toDate, AudioPlayerType);            
+            return Json(result, JsonRequestBehavior.AllowGet);
+        }
+
+        [HttpGet]
+        public JsonResult GetIPACSDynamicAttributeDetails(string nonconfirmityapikey)
+        {
+            var result = IpacsAPI.GetAttributeDynamicDetails(nonconfirmityapikey);
+            return Json(result, JsonRequestBehavior.AllowGet);
+        }
+        [HttpPost]
+        public JsonResult SubmitNonConfirmity(IpacsModel obj)
+        {
+            int resNonConformityId = 0;
+            try
+            {
+                CommomServices service = new CommomServices();
+                IcapipacsIntegrationHistory objIcapipacsIntegrationHistory = new IcapipacsIntegrationHistory();
+                objIcapipacsIntegrationHistory.CallId = Convert.ToInt32(obj.CallId);
+                objIcapipacsIntegrationHistory.AgentName = obj.AgentName;
+                objIcapipacsIntegrationHistory.ClientId = Convert.ToInt32(obj.ClintId);
+                objIcapipacsIntegrationHistory.IpacsJson = JsonConvert.SerializeObject(obj.lstIpacsDynamicAttr);
+                objIcapipacsIntegrationHistory.SyncStatus = 0;
+                objIcapipacsIntegrationHistory.AudioPlyerType = obj.AudioPlyerType;
+                objIcapipacsIntegrationHistory.CreatedBy = ActiveUser.Id;
+                objIcapipacsIntegrationHistory.CreatedDate = DateTime.UtcNow;
+                int IdentityVal = service.SaveIcapIpacsIntegrationHistory(objIcapipacsIntegrationHistory);
+
+                #region Generate Call Link
+                var obService = new PowerBiCommentService();
+                var today = obService.GetValidTimeByClientAndDate(obj.ClientName, DateTime.UtcNow) ?? DateTime.UtcNow; ;
+                BICommentModel oBICommentModel = new BICommentModel();
+                oBICommentModel.AgentId = (ActiveUser.Id == 0 ? null : (int?)ActiveUser.Id);
+                oBICommentModel.CallId = Convert.ToInt32(obj.CallId);
+                oBICommentModel.AgentEmail = obj.lstIpacsDynamicAttr.Where(x => x.displayName == "Default User").Select(y => y.responseValue).FirstOrDefault();
+                oBICommentModel.EncryptedCallId = obj.EncryptedCallId;
+                oBICommentModel.CommentedBy = ActiveUser.Name;
+                oBICommentModel.Scores = true;
+                oBICommentModel.CommentAssignCall = true;
+                oBICommentModel.CallEvents = true;
+                oBICommentModel.Audio = true;
+                oBICommentModel.DownloadAudio = true;
+                oBICommentModel.Transcripts = true;
+                oBICommentModel.TalkTime = true;
+                oBICommentModel.PostComments = true;
+                oBICommentModel.Metadata = true;
+                oBICommentModel.Sentiments = true;
+                var id = obService.AddAssignCallToAgent(oBICommentModel, 0, today);
+                string callUrl = "https://" + HttpContext.Request.Url.Host + "/Home/Index?permissionid=" + id;
+                #endregion
+
+                Dictionary<string, string> My_dict1 = new Dictionary<string, string>();
+                foreach (var item in obj.lstIpacsDynamicAttr)
+                {
+                    if (!string.IsNullOrEmpty(item.responseValue))
+                    {
+                        My_dict1.Add(item.attributeId, item.responseValue);
+                    }
+                }
+                My_dict1.Add("url", callUrl);
+                var entries = My_dict1.Select(d => string.Format("\"{0}\": \"{1}\"", d.Key, string.Join(",", d.Value)));
+                string Strjson = "{" + string.Join(",", entries) + "}";
+                resNonConformityId = IpacsAPI.SubmitNonConfirmity(Strjson, obj.nonconfirmityapikey);
+                if (resNonConformityId > 0)
+                {
+                    int status = service.UpdateIpacsSyncStatus(IdentityVal, callUrl, resNonConformityId);
+                }
+            }
+            catch (Exception ex)
+            {
+
+                throw;
+            }
+            return Json(resNonConformityId, JsonRequestBehavior.AllowGet);
+        }
+    }
+}

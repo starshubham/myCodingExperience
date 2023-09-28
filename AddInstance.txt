@@ -1,0 +1,731 @@
+@model ICap.Models.ClientInstance
+
+@{
+    ViewBag.Title = "AddNew Instance";
+    var ClientInstanceConfiguration = ViewBag.GetAllInstanceList as List<ICap.Models.ClientInstance>;
+}
+
+<h2>AddInstance</h2>
+<style>
+    .label2_add {
+        top: 0px !important;
+    }
+
+    form .change-pwd {
+        margin-bottom: 105px !important
+    }
+
+    .form-group label, select {
+        font-family: 'Poppins';
+        font-style: normal;
+        font-weight: 500;
+        font-size: 13px !important;
+        line-height: 36px;
+        color: #6B6A6A !important;
+    }
+
+    .chosen-container-single .chosen-single {
+        background: transparent !important;
+        border: none !important;
+    }
+
+    .select {
+        overflow-y: auto;
+    }
+
+    .dropzone .chosen-container-single .chosen-drop {
+        bottom: 100% !important;
+        top: auto !important;
+    }
+
+    .modal-backdrop.show {
+        opacity: .5 !important;
+    }
+
+    #ui_notifIt {
+        height: auto !important
+    }
+
+        #ui_notifIt p {
+            line-height: 24px !important;
+            padding: 15px 0px 15px 49px !important;
+            text-align: left;
+        }
+
+    .footer-bottomfixed {
+        background: white;
+        position: fixed;
+        right: 0;
+        bottom: 0px;
+        padding: 10px;
+        width: 74%;
+    }
+
+    .white-form-wrapper {
+        margin: 20px 0 60px 0 !important
+    }
+</style>
+
+<h2>Add</h2>
+
+<div class="container-fluid before-page-unload">
+    <div class="row">
+        <div class="left-pane col-md-3 thin-scroll" id="sidebar">
+            <div class="col-md-12">
+                <div class="mar-top-30 search-client">
+                    <input type="search" class="form-control search-user-input autocomplete-off" autocomplete="off" readonly onfocus="this.removeAttribute('readonly');" onkeyup="searchClient()" id="txtClientSearch">
+                    <label for=" " class="form-control-placeholder searchlabel_box201">Search</label>
+                    <i class="fa fa-search search-icon-gray"></i>
+                </div>
+            </div>
+            <div class="user-list">
+                @Html.Action("ClientList", "ClientSetup")
+            </div>
+        </div>
+
+
+
+
+        <div class=" col-md-9 content-wrap" id="contentContainer">
+
+            @if (new UserInfo().UserType.ToUpper() == UserTypes.Internal.ToUpper())
+            {
+                <div class="breadcrumb row no-mar-bot">
+                    <span class="colapse-menu-container">
+                        <a class="colapse-menu-action" onclick="colapseMenu(true);redrawMappingTbl()" href="javascript:void(0)"><img src="~/assets/images/collapse.png" /></a>
+                        <a class="expand-menu-action" onclick="colapseMenu(false);redrawMappingTbl()" href="javascript:void(0)" style="display:none"><img src="~/assets/images/expand.png" /></a>
+                    </span>
+                    <span class="hyperlink-title" style="height: 28px; margin-top: 1px;"><a href="@Url.Action("ShowClient","ClientSetup")"> View Clients</a></span>
+                    <span class="hyperlink-title"><a href="@Url.Action("ClientListHistory","ClientSetup")">Configure Client</a></span>
+                    <span class="hyperlink-title" style="height: 28px; margin-top: 1px;"><a href="@Url.Action("Add","ClientSetup")"> Add New Client</a></span>
+                    <span class="current-page" style="height: 28px; margin-top: 1px;"><a href="@Url.Action("AddInstance","ClientSetup")"> Instance Configuration</a></span>
+                </div>
+            }
+
+            <div class="white-form-wrapper col-md-12" id="clientformUpdate">
+                <form class="1form-inline" method="post" id="AssibComponent" style="width:100%;" enctype="multipart/form-data">
+                    <div class="container">
+                        <div class="row">
+                            @*<div class="col-md-12"><h1> </h1><hr></div>*@
+                            @Html.HiddenFor(m => m.isActive)
+                            @Html.HiddenFor(m => m.IsDeleted)
+                            @Html.HiddenFor(m => m.DateModified)
+                            @Html.HiddenFor(m => m.DateCreated)
+                            @Html.HiddenFor(m => m.ModifiedBy)
+                            @Html.HiddenFor(m => m.CreatedBy)
+                            @Html.HiddenFor(m => m.InstanceId)
+
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label for=" " class="form-label mb-0">Instance Name <span class="text-danger">*</span></label>
+                                    @Html.TextBoxFor(m => m.InstanceName, new { @maxlength = "100", @class = "form-control transparent-input" })
+                                </div>
+                            </div>
+
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label for=" " class="form-label mb-0">Dynamic Token <span class="text-danger">*</span></label>
+                                    @Html.DropDownListFor(m => m.IsDynamicToken, new[] { new SelectListItem { Text = "Yes", Value = "true" }, new SelectListItem { Text = "No", Value = "false", Selected = true } }, new { @class = "form-control transparent-input", onchange = "IsDynamicIndexChanged()" })
+
+                                </div>
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label for=" " class="form-label mb-0">Base URL <span class="text-danger">*</span></label>
+                                    @Html.TextBoxFor(m => m.BaseUrl, new { @maxlength = "500", @class = "form-control transparent-input" })
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label for=" " class="form-label mb-0">Authorized Token <span id="isdynamictokenno" class="text-danger">*</span></label>
+                                    @Html.TextBoxFor(m => m.AuthorizedToken, new { @maxlength = "1000", @class = "form-control transparent-input" })
+                                </div>
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label for=" " class="form-label mb-0">Instance Authorization URL <span id="isdynamictokenauthurl" class="text-danger"></span></label>
+                                    @Html.TextBoxFor(m => m.InstanceAuthorizationUrl, new { @maxlength = "500", @class = "form-control transparent-input", disabled = true })
+                                </div>
+                            </div>
+
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label for=" " class="form-label mb-0">Instance Authorization Scope URL <span id="isdynamictokenscopeurl" class="text-danger"></span></label>
+                                    @Html.TextBoxFor(m => m.InstanceAuthorizationScopeUrl, new { @maxlength = "500", @class = "form-control transparent-input", disabled = true })
+                                </div>
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label for=" " class="form-label mb-0">Client ID <span id="isdynamictokenclientid" class="text-danger"></span></label>
+                                    @Html.TextBoxFor(m => m.TokenClientId, new { @maxlength = "500", @class = "form-control transparent-input", disabled = true })
+                                </div>
+                            </div>
+
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label for=" " class="form-label mb-0">Client Secret <span id="isdynamictokensecret" class="text-danger"></span></label>
+                                    @Html.PasswordFor(m => m.ClientSecret, new { @maxlength = "500", @class = "form-control transparent-input relative_inputs", disabled = true })
+                                    <i class="fa fa-eye-slash hideEye iconright_side1" id="eyeFTPHide" onclick="showHideEye('ClientSecret')"></i>
+                                    <i class="fa fa-eye showEye eyeFTP iconright_side1" style="display: none" id="eyeFTPShow" onclick="showHideEye('ClientSecret')"></i>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="col-md-12 table-responsive mt-3" style="padding: 10px !important;overflow: visible;">
+                            @if (ClientInstanceConfiguration.Count > 0)
+                            {
+                                <table class="table" id="InstanceTable">
+                                    <thead>
+                                        <tr>
+                                            <th style="display:none;">Instance Id</th>
+                                            <th style="width:70px;">Instance Name</th>
+                                            <th style="width:130px;">Base URL</th>
+                                            <th style="display:none;">Authorized Token</th>
+                                            <th style="width:70px;">Dynamic Token</th>
+                                            <th style="width:120px;">Instance Authorization URL</th>
+                                            <th style="width:160px;">Instance Authorization Scope URL</th>
+                                            <th style="display:none;">Client Id</th>
+                                            <th style="display:none;">Client Secret</th>
+                                            <th style="width:50px;">Action</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var item in ClientInstanceConfiguration)
+                                        {
+                                            <tr>
+                                                <td style="display:none;">
+                                                    @Html.DisplayFor(modelItem => item.InstanceId)
+                                                </td>
+                                                <td>
+                                                    @Html.DisplayFor(modelItem => item.InstanceName)                                                  
+                                                </td>
+                                                <td>
+                                                    @Html.DisplayFor(modelItem => item.BaseUrl)                                                   
+                                                </td>
+                                                <td style="display:none;">
+                                                    @Html.DisplayFor(modelItem => item.AuthorizedToken)
+                                                </td>
+                                                @if (item.IsDynamicToken == true)
+                                                {
+                                                    <td class="IsDynamicToken">Yes</td>
+                                                }
+                                                else
+                                                {
+                                                    <td class="IsDynamicToken">No</td>
+                                                }
+                                                <td>
+                                                    @Html.DisplayFor(modelItem => item.InstanceAuthorizationUrl)                                                
+                                                </td>
+                                                <td>
+                                                    @Html.DisplayFor(modelItem => item.InstanceAuthorizationScopeUrl)                                                    
+                                                </td>
+                                                <td style="display:none;">
+                                                    @Html.DisplayFor(modelItem => item.TokenClientId)
+                                                </td>
+                                                <td style="display:none;">
+                                                    @Html.DisplayFor(modelItem => item.ClientSecret)
+                                                </td>
+                                                <td>
+                                                    <a onclick="editInstance(@item.InstanceId, this)" title="Edit Instance" class="space_icon space_iconA"><img src="~/assets/images/edit.png" title="Edit Ingestion"> </a>
+                                                    <a onclick="deleteInstance(@item.InstanceId)" id="DeleteInstance" title="Delete Ingestion">
+                                                        <img src="/assets/images/delete.png" title="Delete Instance">
+                                                    </a>
+                                                </td>
+                                            </tr>
+
+                                        }
+                                    </tbody>
+                                </table>
+                            }
+                        </div>
+
+                        <div class="col-md-12 right-side btn-wrapper mt-5 footer-bottomfixed" id="btnsubmit">
+                            <a href="@Url.Action("ShowClient","ClientSetup")" class="btn btn-red">Cancel <i class="fa fa-times" aria-hidden="true"></i> </a>
+                            <a href="javascript:void(0)" class="btn btn-green" onclick="window.location.reload()">Reset <i class="fa fa-undo" aria-hidden="true"> </i> </a>
+                            <a href="javascript:void(0)" class="btn btn-blue" onclick="submitForm()">Save <i class="fa fa-check" aria-hidden="true"></i> </a>
+                        </div>
+
+                        <div class="modal" id="dynamictokenconfirm" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false" role="dialog" aria-labelledby="modalGreenClkTitle" aria-hidden="true">
+                            <div class="modal-dialog modal-dialog-centered" role="document">
+                                <div class="modal-content">
+
+
+
+
+                                    <div class="modal-body">
+                                        <button type="button" class="off-ingestion close-ingestion" data-bs-dismiss="modal" aria-label="Close" onclick="closedynamictokenconfirm()">
+                                            <span aria-hidden="true"><img src="~/Images/close.png" /></span>
+                                        </button>
+                                        <span>Are you sure you want to change Dynamic token value? If yes, all your configurations will be lost?</span>
+                                    </div>
+                                    <div class="modal-footer">
+                                        <button type="button" class="btn-no1 saveMe" data-bs-dismiss="modal" onclick="closedynamictokenconfirm()">No</button>
+                                        @*<button type="button" class="btn .btn_primary" onclick="enableDisable(false)">Save changes </button>*@
+                                        <button type="button" class="btn btn-blue" onclick="emptyfieldsfields()">
+                                            Yes
+                                            <span aria-hidden="true"><i class="fa fa-check" aria-hidden="true"></i></span>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+
+                        <!--  <div class="modal" id="DeleteConfirmationArea" data-backdrop="static" tabindex="-1" role="dialog" aria-labelledby="DeleteConformationArea" aria-hidden="true">-->
+                        <div class="modal" id="DeleteConfirmationArea" data-bs-backdrop="static" data-bs-keyboard="false" tabindex="-1" role="dialog" aria-labelledby="DeleteConformationArea" aria-hidden="true">
+                            <div class="modal-dialog modal-dialog-centered" role="document">
+                                <div class="modal-content">
+                                    <div class="modal-body">
+                                        <button type="button" class="close-custom" data-bs-dismiss="modal" onclick="ClearInstanceId()" aria-label="Close">
+                                            &times;
+                                        </button>
+                                        <span>Are you sure, you want to delete instance configuration?</span>
+                                    </div>
+
+
+                                    <div class="modal-footer">
+                                        <button type="button" class="btn-no1" data-bs-dismiss="modal" onclick="ClearInstanceId()">No  </button>
+                                        <button type="button" class="btn btn-blue" onclick="deleteInstancePermanently(this)">
+                                            Yes
+                                            <span aria-hidden="true"><i class="fa fa-check" aria-hidden="true"></i></span>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+
+        </div><!-- User Create Ends -->
+
+
+    </div><!--Contents column Ends-->
+
+
+</div>
+@section scripts{
+
+    <link href="/Scripts/Croppie/croppie.min.css" rel="stylesheet" />
+    <script src="/Scripts/Croppie/croppie.min.js"></script>
+    <link href="~/Content/css/chosen.css" rel="stylesheet" />
+    <script src="~/Scripts/chosen/chosen.jquery.js"></script>
+    <link href="~/Scripts/DataTable/css/jquery.dataTables.css" rel="stylesheet" />
+    <script src="~/Scripts/DataTable/js/jquery.dataTables.js"></script>
+
+    <script type="text/javascript">
+        var instanceTable;
+
+        $(document).ready(function () {
+            instanceTable = $("#InstanceTable").dataTable({
+                "bAutoWidth": false,
+                retrieve: true,
+                responsive: true,
+                lengthMenu: [5, 10, 50],
+                "order": [[0, "desc"]],
+            })
+        });
+
+        function submitForm() {
+            var instanceName = $("#InstanceName").val().replace("&amp;", "&").trim();
+
+            $.ajax({
+                type: "POST",
+                url: "/ClientSetup/IsInstanceNameExists?instanceName=" + instanceName + "&instanceid=" + $("#InstanceId").val(),
+                //dataType: "json",
+                contentType: 'application/json; charset=utf-8',
+                success: function (data, textStatus, xhr) {
+
+                    if (data.Data != null) {
+
+                        $("#InstanceName").focus();
+                        notif({ msg: "Instance name already exists!", type: "error" });
+                        return false;
+                    }
+                    else {
+                        if (isValid()) {
+                            isLoading(true);
+                            var obj = generateObject();
+                            //console.log(obj);
+                            if (obj.IsValid) {
+                                $.ajax({
+                                    type: "POST",
+                                    url: "/ClientSetup/SaveInstanceData",
+                                    data: JSON.stringify({ model: obj }),
+                                    dataType: "json",
+                                    contentType: 'application/json; charset=utf-8',
+                                    success: function (data, textStatus, xhr) {
+
+                                        //isLoading(false);
+                                        $(window).off('beforeunload');
+                                        if ($('#InstanceId').val() == '') {
+                                            notif({ msg: "Instance Configuration saved successfully!", type: "success" });
+                                        }
+                                        else {
+                                            notif({ msg: "Instance Configuration updated successfully!", type: "success" });
+                                        }
+                                        window.location.href = "/ClientSetup/AddInstance";
+                                    },
+                                    error: function (errorData) {
+                                        isLoading(false);
+                                        console.log(errorData);
+                                        notif({ msg: "Failed to saved Instance!", type: "error" })
+                                    }
+                                });
+                            } else {
+                                isLoading(false);
+                            }
+                        }
+                        else {
+                            isLoading(false);
+                        }
+                    }
+                },
+                error: function (errorData) {
+                    console.log(errorData);
+                    notif({ msg: "Failed to check instance name!", type: "error" });
+                    IsExists = false;
+                    //return false;
+                }
+            });
+        }
+
+        function isValid() {
+
+            if ($("#InstanceName").val().trim() == null || $("#InstanceName").val().trim() == "" || $("#InstanceName").val().trim() == undefined) {
+                $("#InstanceName").focus();
+                notif({ msg: "Please fill out the mandatory fields!", type: "error" })
+                return false;
+            }
+
+            if ($("#IsDynamicToken").val() == "true") {
+                if ($("#BaseUrl").val().trim() == null || $("#BaseUrl").val().trim() == "" || $("#BaseUrl").val().trim() == undefined) {
+                    $("#BaseUrl").focus();
+                    notif({ msg: "Please fill out the mandatory fields!", type: "error" })
+                    return false;
+                }
+                if ($("#InstanceAuthorizationUrl").val().trim() == null || $("#InstanceAuthorizationUrl").val().trim() == "" || $("#InstanceAuthorizationUrl").val().trim() == undefined) {
+                    $("#InstanceAuthorizationUrl").focus();
+                    notif({ msg: "Please fill out the mandatory fields!", type: "error" })
+                    return false;
+                }
+                else if ($("#InstanceAuthorizationScopeUrl").val().trim() == null || $("#InstanceAuthorizationScopeUrl").val().trim() == "" || $("#InstanceAuthorizationScopeUrl").val().trim() == undefined) {
+                    $("#InstanceAuthorizationScopeUrl").focus();
+                    notif({ msg: "Please fill out the mandatory fields!", type: "error" })
+                    return false;
+                }
+                else if ($("#TokenClientId").val().trim() == null || $("#TokenClientId").val().trim() == "" || $("#TokenClientId").val().trim() == undefined) {
+                    $("#TokenClientId").focus();
+                    notif({ msg: "Please fill out the mandatory fields!", type: "error" })
+                    return false;
+                }
+                else if ($("#ClientSecret").val().trim() == null || $("#ClientSecret").val().trim() == "" || $("#ClientSecret").val().trim() == undefined) {
+                    $("#ClientSecret").focus();
+                    notif({ msg: "Please fill out the mandatory fields!", type: "error" })
+                    return false;
+                }
+                if (isUrlValid($("#BaseUrl").val().trim()) && isHttpValid($("#BaseUrl").val().trim())) { }
+                else {
+                    $("#BaseUrl").focus();
+                    notif({ msg: "Base URL not in correct format!", type: "error" })
+                    return false;
+                }
+                if (isUrlValid($("#InstanceAuthorizationUrl").val().trim()) && isHttpValid($("#InstanceAuthorizationUrl").val().trim())) { }
+                else {
+                    $("#InstanceAuthorizationUrl").focus();
+                    notif({ msg: "Instance Authorization URL not in correct format!", type: "error" })
+                    return false;
+                }
+                if (isUrlValid($("#InstanceAuthorizationScopeUrl").val().trim()) && isHttpValid($("#InstanceAuthorizationScopeUrl").val().trim())) { }
+                else {
+                    $("#InstanceAuthorizationScopeUrl").focus();
+                    notif({ msg: "Instance Authorization Scope URL not in correct format!", type: "error" })
+                    return false;
+                }
+                return true;
+            }
+            else {
+                if ($("#BaseUrl").val().trim() == null || $("#BaseUrl").val().trim() == "" || $("#BaseUrl").val().trim() == undefined) {
+                    $("#BaseUrl").focus();
+                    notif({ msg: "Please fill out the mandatory fields!", type: "error" })
+                    return false;
+                }
+                else if ($("#AuthorizedToken").val().trim() == null || $("#AuthorizedToken").val().trim() == "" || $("#AuthorizedToken").val().trim() == undefined) {
+                    $("#AuthorizedToken").focus();
+                    notif({ msg: "Please fill out the mandatory fields!", type: "error" })
+                    return false;
+                }
+                if (isUrlValid($("#BaseUrl").val().trim()) && isHttpValid($("#BaseUrl").val().trim())) { }
+                else {
+                    $("#BaseUrl").focus();
+                    notif({ msg: "Base URL not in correct format!", type: "error" })
+                    return false;
+                }
+                return true;
+            }
+        }
+
+        function generateObject() {
+            var obj = { IsValid: true };
+
+            generateGeneralDetailJson(obj);
+            return obj;
+        }
+
+        function generateGeneralDetailJson(obj) {
+
+            obj.InstanceId = $('#InstanceId').val();
+            if (obj.InstanceId != null && obj.InstanceId > 0) {
+
+                obj.InstanceId = $('#InstanceId').val();
+                obj.InstanceName = $("#InstanceName").val();
+                obj.BaseUrl = $("#BaseUrl").val();
+                obj.AuthorizedToken = $("#AuthorizedToken").val();
+                obj.IsDynamicToken = $("#IsDynamicToken").val();
+                obj.InstanceAuthorizationUrl = $("#InstanceAuthorizationUrl").val();
+                obj.InstanceAuthorizationScopeUrl = $("#InstanceAuthorizationScopeUrl").val();
+
+                obj.TokenClientId = $("#TokenClientId").val();
+                obj.ClientSecret = $("#ClientSecret").val();
+            }
+            else {
+                obj.InstanceName = $("#InstanceName").val();
+                obj.BaseUrl = $("#BaseUrl").val();
+                obj.AuthorizedToken = $("#AuthorizedToken").val();
+                obj.IsDynamicToken = $("#IsDynamicToken").val();
+                obj.InstanceAuthorizationUrl = $("#InstanceAuthorizationUrl").val();
+                obj.InstanceAuthorizationScopeUrl = $("#InstanceAuthorizationScopeUrl").val();
+
+                obj.TokenClientId = $("#TokenClientId").val();
+                obj.ClientSecret = $("#ClientSecret").val();
+            }
+
+            return obj;
+        }
+
+        function IsDynamicIndexChanged() {
+            if ($("#IsDynamicToken").val() == "true") {
+                $('#isdynamictokenauthurl').text('*');
+                $('#isdynamictokenscopeurl').text('*');
+                $('#isdynamictokenclientid').text('*');
+                $('#isdynamictokensecret').text('*');
+                $('#isdynamictokenno').text('');
+                $('#BaseUrl').attr('disabled', false);
+                $('#AuthorizedToken').attr('disabled', true);
+                $('#InstanceAuthorizationUrl').attr('disabled', false);
+                $('#InstanceAuthorizationScopeUrl').attr('disabled', false);
+                $('#TokenClientId').attr('disabled', false);
+                $('#ClientSecret').attr('disabled', false);
+
+                if ($("#AuthorizedToken").val().trim() != null && $("#AuthorizedToken").val().trim() != "" && $("#AuthorizedToken").val().trim() != undefined) {
+
+                    $('#dynamictokenconfirm').modal('show');
+                }
+            }
+            else {
+
+                $('#isdynamictokenauthurl').text('');
+                $('#isdynamictokenscopeurl').text('');
+                $('#isdynamictokenclientid').text('');
+                $('#isdynamictokensecret').text('');
+                $('#isdynamictokenno').text('*');
+                $('#BaseUrl').attr('disabled', false);
+                $('#AuthorizedToken').attr('disabled', false);
+                $('#InstanceAuthorizationUrl').attr('disabled', true);
+                $('#InstanceAuthorizationScopeUrl').attr('disabled', true);
+                $('#TokenClientId').attr('disabled', true);
+                $('#ClientSecret').attr('disabled', true);
+                if (($("#InstanceAuthorizationUrl").val().trim() != null && $("#InstanceAuthorizationUrl").val().trim() != "" && $("#InstanceAuthorizationUrl").val().trim() != undefined)
+                    || ($("#InstanceAuthorizationScopeUrl").val().trim() != null && $("#InstanceAuthorizationScopeUrl").val().trim() != "" && $("#InstanceAuthorizationScopeUrl").val().trim() != undefined)
+                    || ($("#TokenClientId").val().trim() != null && $("#TokenClientId").val().trim() != "" && $("#TokenClientId").val().trim() != undefined)
+                    || ($("#ClientSecret").val().trim() != null && $("#ClientSecret").val().trim() != "" && $("#ClientSecret").val().trim() != undefined)) {
+
+                    $('#dynamictokenconfirm').modal('show');
+                }
+            }
+        }
+
+        function isUrlValid(stringurl) {
+            try {
+                new URL(stringurl);
+                return true;
+            } catch (err) {
+                return false;
+            }
+        };
+
+        function isHttpValid(stringurl) {
+            try {
+                const newUrl = new URL(stringurl);
+                return newUrl.protocol === 'http:' || newUrl.protocol === 'https:';
+            } catch (err) {
+                return false;
+            }
+        }
+
+        function emptyfieldsfields() {
+            if ($("#IsDynamicToken").val() == "true") {
+                /*$("#BaseUrl").val("");*/
+                $("#AuthorizedToken").val("");
+                $('#dynamictokenconfirm').modal('hide');
+            }
+            else {
+                $("#InstanceAuthorizationUrl").val("");
+                $("#InstanceAuthorizationScopeUrl").val("");
+                $("#TokenClientId").val("");
+                $("#ClientSecret").val("");
+                $('#dynamictokenconfirm').modal('hide');
+            }
+        }
+
+        function closedynamictokenconfirm() {
+            $('#dynamictokenconfirm').modal('hide');
+            $('#IsDynamicToken').val() == "true" ? $('#IsDynamicToken').val('false') : $('#IsDynamicToken').val('true');
+            IsDynamicIndexChanged();
+        }
+
+        function showHideEye(e) {
+            var x = document.getElementById(e);
+            if (x.type === "password") {
+                x.type = "type";
+                $('#eyeFTPShow').attr('style', 'display:inline-block');
+                $('#eyeFTPHide').attr('style', 'display:none');
+            }
+            else {
+                x.type = "password";
+                $('#eyeFTPHide').attr('style', 'display:inline-block');
+                $('#eyeFTPShow').attr('style', 'display:none');
+            }
+        }
+
+        function editInstance(id, e) {
+            $("#InstanceName").focus();
+            $('#InstanceId').val(id);
+            let instanceName = $(e).closest('tr').children('td').eq(1).text().replaceAll("&amp;", "&").trim();
+            let baseUrl = $(e).closest('tr').children('td').eq(2).text().trim().replaceAll("&amp;", "&").trim();;
+            let authorizedToken = $(e).closest('tr').children('td').eq(3).text().trim().replaceAll("&amp;", "&").trim();;
+            let isDynamicToken = $(e).closest('tr').children('td').eq(4).text().trim().replaceAll("&amp;", "&").trim();;
+            let instanceAuthorizationUrl = $(e).closest('tr').children('td').eq(5).text().trim().replaceAll("&amp;", "&").trim();;
+            let instanceAuthorizationScopeUrl = $(e).closest('tr').children('td').eq(6).text().trim().replaceAll("&amp;", "&").trim();;
+            let tokenClientId = $(e).closest('tr').children('td').eq(7).text().trim().replaceAll("&amp;", "&").trim();;
+            let clientSecret = $(e).closest('tr').children('td').eq(8).text().trim().replaceAll("&amp;", "&").trim();;
+
+            $('#InstanceName').val(instanceName);
+            $('#BaseUrl').val(baseUrl);
+            $('#AuthorizedToken').val(authorizedToken);
+
+            (isDynamicToken == "True" || isDynamicToken == "Yes") ? $('#IsDynamicToken').val('true') : $('#IsDynamicToken').val('false');
+            if ($("#IsDynamicToken").val() == "true") {
+                $('#BaseUrl').attr('disabled', false);
+                $('#AuthorizedToken').attr('disabled', true);
+                $('#InstanceAuthorizationUrl').attr('disabled', false);
+                $('#InstanceAuthorizationScopeUrl').attr('disabled', false);
+                $('#TokenClientId').attr('disabled', false);
+                $('#ClientSecret').attr('disabled', false);
+            }
+            else {
+                $('#BaseUrl').attr('disabled', false);
+                $('#AuthorizedToken').attr('disabled', false);
+                $('#InstanceAuthorizationUrl').attr('disabled', true);
+                $('#InstanceAuthorizationScopeUrl').attr('disabled', true);
+                $('#TokenClientId').attr('disabled', true);
+                $('#ClientSecret').attr('disabled', true);
+            }
+
+            $('#InstanceAuthorizationUrl').val(instanceAuthorizationUrl);
+            $('#InstanceAuthorizationScopeUrl').val(instanceAuthorizationScopeUrl);
+            $('#TokenClientId').val(tokenClientId);
+            $('#ClientSecret').val(clientSecret);
+
+        }
+
+        function ClearInstanceId() {
+            $('#InstanceId').val('');
+        }
+
+        function deleteInstance(e) {
+            $('#InstanceId').val(e);
+
+            $.ajax({
+                type: "POST",
+                url: "/ClientSetup/IsInstanceMappedForClient?instanceId=" + parseInt($('#InstanceId').val()),
+                //dataType: "json",
+                contentType: 'application/json; charset=utf-8',
+                success: function (data, textStatus, xhr) {
+                    isLoading(false);
+                    if (data['IsSuccess'] == true) {
+                        notif({ msg: "The instance you are trying to delete is being used for multiple clients. In order to delete please remove the same from all the clients!", type: "error" });
+                        $('#InstanceId').val('');
+                    }
+                    else {
+                        $('#DeleteConfirmationArea').modal('show');
+                    }
+                },
+                error: function (errorData) {
+                    isLoading(false);
+                    notif({ msg: "Failed to check whether Instance is used for any client or not!", type: "error" })
+                }
+            });
+        }
+
+        function deleteInstancePermanently(e) {
+            $.ajax({
+                type: "POST",
+                url: "/ClientSetup/DeleteInstance?instanceId=" + parseInt($('#InstanceId').val()),
+                //dataType: "json",
+                contentType: 'application/json; charset=utf-8',
+                success: function (data, textStatus, xhr) {
+                    $(window).off('beforeunload');
+                    notif({ msg: "Instance Configuration deleted successfully!", type: "success" });
+                    window.location.href = "/ClientSetup/AddInstance";
+                },
+                error: function (errorData) {
+                    isLoading(false);
+                    //console.log(errorData);
+                    notif({ msg: "Failed to delete Instance!", type: "error" })
+                }
+            });
+            $('#DeleteConfirmationArea').modal('hide');
+        }
+
+        $(function () {
+            $("#InstanceName").keypress(function (e) {
+                var keyCode = e.keyCode || e.which;
+                var regex = /^[A-Za-z0-9_ ]+$/;
+                var isValid = regex.test(String.fromCharCode(keyCode));
+                return isValid;
+            });
+        });
+
+        $(function () {
+            $("#BaseUrl").keypress(function (e) {
+                var keyCode = e.keyCode || e.which;
+                var regex = /^[%]+$/;
+                var isValid = regex.test(String.fromCharCode(keyCode));
+                return !isValid;
+            });
+        });
+        $(function () {
+            $("#InstanceAuthorizationUrl").keypress(function (e) {
+                var keyCode = e.keyCode || e.which;
+                var regex = /^[%]+$/;
+                var isValid = regex.test(String.fromCharCode(keyCode));
+                return !isValid;
+            });
+        });
+        $(function () {
+            $("#InstanceAuthorizationScopeUrl").keypress(function (e) {
+                var keyCode = e.keyCode || e.which;
+                var regex = /^[%]+$/;
+                var isValid = regex.test(String.fromCharCode(keyCode));
+                return !isValid;
+            });
+        });
+    </script>
+}

@@ -1,0 +1,269 @@
+@model ICap.Domain.CommentTypeConfig
+@{
+    var CommentTypeConfig = ViewBag.CommentTypeConfig as List<ICap.ViewModels.CommentTypeConfigDTO>;
+}
+<div class="row mt-3">
+    <div class="col-md-6 mt-2" id="configurationType">
+        <label class="radio-inline" style="padding-right:20px;">
+            <input type="radio" id="roleBasedConfig" name="ConfigurationType" value="RoleBased" class=" " checked onchange="toggleCommentTypeConfig('RoleBased')">
+            <span class="radion_span">Role Based Configuration </span>
+        </label>
+        <label class="radio-inline">
+            <input type="radio" id="designationBasedConfig" name="ConfigurationType" value="DesignationBased" class=" " onchange="toggleCommentTypeConfig('DesignationBased')">
+            <span class="radion_span">Designation Based Configuration</span>
+        </label>
+    </div>
+
+    <div class="col-md-6">
+        <nav>
+            <div class="nav nav-tabs nav-fill tabheader_part" id="nav-AndOr" role="tablist">
+                <a class="nav-item nav-link comment_navitem" id="nav-And-tab" data-toggle="tab" href="#nav-home" role="tab" aria-controls="nav-And" aria-selected="true">And</a>
+                <a class="nav-item nav-link comment_navitem active" id="nav-Or-tab" data-toggle="tab" href="#nav-Default" role="tab" aria-controls="nav-Or" aria-selected="false" tabindex="-1">Or</a>
+            </div>
+            <span class="tooltipp tooltipp_zip">
+                <img src="/Images/tooltipicon_1.svg">
+                <span class="tooltiptext tooltip-xl325"> Select AND option to enable Predefined & free text comment simultaneously, else Select OR option to enable either one of them.</span>
+            </span>
+        </nav>
+    </div>
+</div>
+
+<div id="roleBasedContainerId">
+    <div class="row">
+        <div class="col-md-5">
+            <div class="form-group">
+                <label class="control-label">Select Role</label><br />
+                <select type="select" id="RoleIds" name="RoleIds" multiple="multiple" class="selectRole dropdown-toggle btn btn-default width-100per ng-binding white-space form-control text-left" required>
+                    <option value="2">Client Admin</option>
+                    <option value="3">QM</option>
+                    <option value="4">QA</option>
+                    <option value="5">Custom QA</option>
+                    <option value="6">Agent</option>
+                </select>
+            </div>
+        </div>
+        <div class="col-md-5">
+            <div class="form-group">
+                <label for=" " class="">Select Comment Type</label><br />
+                @Html.DropDownListFor(m => m.CommentTypeIds, ViewBag.GetCommentType as SelectList, new { @class = "roleCommentType dropdown-toggle btn btn-default width-100per ng-binding white-space form-control text-left", multiple = "multiple" })
+            </div>
+        </div>
+        <div class="col-md-2 add-button-container icon_align_bottom SFTPContainer">
+            <div>
+                <a href="javascript:void(0)" class="" onclick="addRoleBasedConfigRow()">
+                    <img src="~/assets/images/addicon.svg" title="Add Row">
+                </a>
+            </div>
+        </div>
+        <div class="col-md-2 delete-button-container icon_align_bottom SFTPContainer">
+            <div>
+                <a onclick="removeRoleBasedConfigRow(this)"><img src="~/assets/images/delete1.svg" title="Delete Row"> </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="designationBasedContainerId" class="SFTPContainer">
+    <div class="row">
+        <div class="col-md-5">
+            <div class="form-group">
+                <label class="control-label">Select Designation</label><br />
+                @Html.DropDownListFor(m => m.DesignationIds, ViewBag.GetUserDesignations as SelectList, new { @class = "selectDesignation dropdown-toggle btn btn-default width-100per ng-binding white-space form-control text-left", multiple = "multiple" })
+            </div>
+        </div>
+        <div class="col-md-5 mb">
+            <div class="form-group">
+                <label for=" " class="">Select Comment Type</label><br />
+                @Html.DropDownListFor(m => m.CommentTypeIds, ViewBag.GetCommentType as SelectList, new { @class = "designationCommentType dropdown-toggle btn btn-default width-100per ng-binding white-space form-control text-left", multiple = "multiple" })
+            </div>
+        </div>
+        <div class="col-md-2 add-button-container icon_align_bottom SFTPContainer">
+            <div>
+                <a href="javascript:void(0)" class="" onclick="addDesignationBasedConfigRow()">
+                    <img src="~/assets/images/addicon.svg" title="Add Row">
+                </a>
+            </div>
+        </div>
+        <div class="col-md-2 delete-button-container icon_align_bottom SFTPContainer">
+            <div>
+                <a onclick="removeDesignationBasedConfigRow(this)"><img src="~/assets/images/delete1.svg" title="Delete Row"> </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+<script>
+    var cTypeConfigIdsToBeDeleted = [];
+
+    function toggleCommentTypeConfig(configType) {
+        if (configType == 'RoleBased') {
+            $("#roleBasedContainerId").removeClass('SFTPContainer');
+            $("#designationBasedContainerId").addClass('SFTPContainer');
+
+            $('#designationBasedContainerId .row:not(:first)').remove();
+
+            // Code to unselect all multiselect options for Select Designation
+            $('#DesignationIds').val([]);
+            $('#DesignationIds').multiselect("refresh");
+
+            // Code to unselect all multiselect options for Select Comment Type
+            $('.designationCommentType').val([]);
+            $('.designationCommentType').multiselect("refresh");
+        }
+        else if (configType == 'DesignationBased') {
+            $("#roleBasedContainerId").addClass('SFTPContainer');
+            $("#designationBasedContainerId").removeClass('SFTPContainer');
+
+            $('#roleBasedContainerId .row:not(:first)').remove();
+
+            // Code to unselect all multiselect options for Select Role
+            $('#RoleIds').val([]);
+            $('#RoleIds').multiselect("refresh");
+
+            // Code to unselect all multiselect options for Select Comment Type
+            $('.roleCommentType').val([]);
+            $('.roleCommentType').multiselect("refresh");
+
+        }
+    }
+
+    function addRoleBasedConfigRow() { 
+
+        // Reset the selectedValuesInPreviousDropdowns array
+        var selectedValuesInPreviousDropdowns = [];
+
+        $("#roleBasedContainerId .row").find(".selectRole").each(function () {
+            var selectedValues = $(this).val();
+            selectedValuesInPreviousDropdowns = selectedValuesInPreviousDropdowns.concat(selectedValues);
+        });
+        let lastRowOptionsLength = $("#roleBasedContainerId .row:last").find(".selectRole option").length;
+
+        // Do not create new row if all the dropdown options already selected in previous Select Role dropdowns or lastRowOptionsLength is equal to total length of dropdown options
+        if (lastRowOptionsLength == selectedValuesInPreviousDropdowns.length || lastRowOptionsLength == $("#roleBasedContainerId .row").length) {
+            return;
+        }        
+
+        // Destroy both Multiselect dropdown
+        $("#roleBasedContainerId .row:first").find("#RoleIds").multiselect('destroy');
+        $("#roleBasedContainerId .row:first").find(".roleCommentType").multiselect('destroy');
+
+        // Clone the first row inside roleBasedContainerId
+        var newRow = $("#roleBasedContainerId .row:first").clone();
+
+        newRow.removeAttr("data-id");        
+
+        // Disable options in the next multiselect dropdown based on selections in previously all dropdowns
+        newRow.find(".selectRole").each(function () {
+            var nextDropdown = $(this);
+
+            if (selectedValuesInPreviousDropdowns && selectedValuesInPreviousDropdowns.length > 0) {
+                nextDropdown.find("option").each(function () {
+                    if (selectedValuesInPreviousDropdowns.includes($(this).val())) {
+                        $(this).prop("disabled", true);
+                    } else {
+                        $(this).prop("disabled", false);
+                    }
+                });
+            }
+        });
+
+        // Enable Select All option in prev Multiselect dropdowns
+        $("#roleBasedContainerId .row:first").find("#RoleIds").multiselect({ includeSelectAllOption: true });
+        $("#roleBasedContainerId .row:first").find(".roleCommentType").multiselect({ includeSelectAllOption: true });
+
+        // Unselect all dropdown options of newly generated dropdown
+        newRow.find("#RoleIds").val([]);
+        newRow.find("#RoleIds").multiselect({ includeSelectAllOption: true });
+        newRow.find("#RoleIds").multiselect("refresh");
+
+        newRow.find(".roleCommentType").val([]);
+        newRow.find(".roleCommentType").multiselect({ includeSelectAllOption: true });
+        newRow.find(".roleCommentType").multiselect("refresh");        
+
+        // Hide the "Add" button and show the "Delete" button
+        newRow.find(".add-button-container").addClass('SFTPContainer');
+        newRow.find(".delete-button-container").removeClass('SFTPContainer');
+
+        // Append the cloned row to the container
+        $("#roleBasedContainerId").append(newRow);
+
+    }
+
+    function removeRoleBasedConfigRow(button) {
+        // Find the closest row and remove it
+        $(button).closest(".row").remove();
+        var deletedRowId = $(button).closest(".row").data("id");
+        cTypeConfigIdsToBeDeleted.push(deletedRowId);
+    }
+
+    function addDesignationBasedConfigRow() {
+
+        // Reset the selectedValuesInPreviousDropdowns array
+        var selectedValuesInPreviousDropdowns = [];
+
+        $("#designationBasedContainerId .row").find(".selectDesignation").each(function () {
+            var selectedValues = $(this).val();
+            selectedValuesInPreviousDropdowns = selectedValuesInPreviousDropdowns.concat(selectedValues);
+        });
+        let lastRowOptionsLength = $("#designationBasedContainerId .row:last").find(".selectDesignation option").length;
+
+        // Do not create new row if all the dropdown options already selected in previous Select Role dropdowns or lastRowOptionsLength is equal to total length of dropdown options
+        if (lastRowOptionsLength == selectedValuesInPreviousDropdowns.length || lastRowOptionsLength == $("#designationBasedContainerId .row").length) {
+            return;
+        }
+
+        // Destroy both Multiselect dropdown
+        $("#designationBasedContainerId .row:first").find(".selectDesignation").multiselect('destroy');
+        $("#designationBasedContainerId .row:first").find(".designationCommentType").multiselect('destroy');
+
+        // Clone the first row inside roleBasedContainerId
+        var newRow = $("#designationBasedContainerId .row:first").clone();
+
+        // Remove the 'data-id' attribute from the cloned row
+        newRow.removeAttr("data-id");
+
+        // Disable options in the next multiselect dropdown based on selections in previously all dropdowns
+        newRow.find(".selectDesignation").each(function () {
+            var nextDropdown = $(this);
+
+            if (selectedValuesInPreviousDropdowns && selectedValuesInPreviousDropdowns.length > 0) {
+                nextDropdown.find("option").each(function () {
+                    if (selectedValuesInPreviousDropdowns.includes($(this).val())) {
+                        $(this).prop("disabled", true);
+                    } else {
+                        $(this).prop("disabled", false);
+                    }
+                });
+            }
+        });
+
+        // Enable Select All option in prev Multiselect dropdowns
+        $("#designationBasedContainerId .row:first").find(".selectDesignation").multiselect({ includeSelectAllOption: true });
+        $("#designationBasedContainerId .row:first").find(".designationCommentType").multiselect({ includeSelectAllOption: true });
+
+        // Unselect all dropdown options of newly generated dropdown
+        newRow.find(".selectDesignation").val([]);
+        newRow.find(".selectDesignation").multiselect({ includeSelectAllOption: true });
+        newRow.find(".selectDesignation").multiselect("refresh");
+
+        newRow.find(".designationCommentType").val([]);
+        newRow.find(".designationCommentType").multiselect({ includeSelectAllOption: true });
+        newRow.find(".designationCommentType").multiselect("refresh");
+
+        // Hide the "Add" button and show the "Delete" button
+        newRow.find(".add-button-container").addClass('SFTPContainer');
+        newRow.find(".delete-button-container").removeClass('SFTPContainer');
+
+        // Append the cloned row to the container
+        $("#designationBasedContainerId").append(newRow);
+    }
+
+    function removeDesignationBasedConfigRow(button) {
+        // Find the closest row and remove it
+        $(button).closest(".row").remove();
+        var deletedRowId = $(button).closest(".row").data("id");
+        cTypeConfigIdsToBeDeleted.push(deletedRowId);
+    }
+</script>

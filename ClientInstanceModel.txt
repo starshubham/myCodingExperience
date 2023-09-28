@@ -1,0 +1,35 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Web;
+
+namespace ICap.Models
+{
+    public class ClientInstance
+    {
+        public int InstanceId { get; set; } // ID (Primary key)
+        public string InstanceName { get; set; } // InstanceName (length: 200)
+        public string BaseUrl { get; set; } 
+        public string AuthorizedToken { get; set; } 
+        public bool IsDynamicToken { get; set; } 
+
+        public string InstanceAuthorizationUrl { get; set; } 
+
+        public string InstanceAuthorizationScopeUrl { get; set; } 
+        public string TokenClientId { get; set; } 
+
+        public string ClientSecret { get; set; } 
+
+        public System.DateTime DateCreated { get; set; }
+
+        public System.DateTime DateModified { get; set; }
+        public int CreatedBy { get; set; }
+        public int ModifiedBy { get; set; }
+        public bool isActive { get; set; }
+
+        public bool IsDeleted { get; set; }
+        public int InstanceParentId { get; set; }
+        public bool IsParent { get; set; }
+        public bool IsChild { get; set; }
+    }
+}

@@ -1,0 +1,1886 @@
+using ICap.BusinessLayer;
+//using FirmPortal.Common;
+using ICap.Commom;
+using ICap.Common;
+using ICap.Domain;
+using ICap.Models;
+using ICap.ViewModels;
+using Microsoft.AspNet.Identity;
+using Microsoft.AspNet.Identity.Owin;
+using Microsoft.Owin.Security;
+using Org.BouncyCastle.Asn1.Ocsp;
+using System;
+using System.Collections.Generic;
+//using AutoMapper;
+using System.Configuration;
+using System.Globalization;
+using System.IO;
+using System.Linq;
+using System.Net.Mime;
+using System.Reflection;
+using System.Runtime.Remoting.Contexts;
+using System.Text;
+using System.Threading.Tasks;
+using System.Web;
+using System.Web.Helpers;
+using System.Web.Mvc;
+using System.Web.SessionState;
+
+
+namespace ICap.Controllers
+{
+    [Authorize]
+    public partial class AccountController : Controller
+    {
+        private ApplicationSignInManager _signInManager;
+        private ApplicationUserManager _userManager;
+        private ICMDbContext cMDbContext;
+
+        public AccountController()
+        {
+        }
+
+        public AccountController(ApplicationUserManager userManager, ApplicationSignInManager signInManager)
+        {
+            UserManager = userManager;
+            SignInManager = signInManager;
+        }
+
+        public ApplicationSignInManager SignInManager
+        {
+            get
+            {
+                return _signInManager ?? HttpContext.GetOwinContext().Get<ApplicationSignInManager>();
+            }
+            private set
+            {
+                _signInManager = value;
+            }
+        }
+
+        public ApplicationUserManager UserManager
+        {
+            get
+            {
+                return _userManager ?? HttpContext.GetOwinContext().GetUserManager<ApplicationUserManager>();
+            }
+            private set
+            {
+                _userManager = value;
+            }
+        }
+
+        // GET: /Account/Login
+        [AllowAnonymous]
+        public ActionResult Login(string returnUrl, string permissionid, string callid)
+        {
+            if ((Request.Url + "").ToLower().Contains("icap-health.provana.com") == false && ConfigurationManager.AppSettings["ClientTZ"] == "tzInstance" && ConfigurationManager.AppSettings["COGNITO_OAUTH2_ENABLE"] == "SSO")
+            {
+                return RedirectToSAML(null);
+            }
+
+            if (returnUrl != null && (returnUrl.Split('/')[1] == "Home" || returnUrl.Split('/')[1] == "home") && (returnUrl.Split('/')[2].Split('?')[0] == "Index" || returnUrl.Split('/')[2].Split('?')[0] == "index"))
+            {
+                if (String.IsNullOrEmpty(permissionid) && returnUrl.ToLower().Contains("permissionid"))
+                {
+                    permissionid = returnUrl.Substring(returnUrl.IndexOf("=") + 1);
+                }
+                else if (returnUrl.ToLower().Contains("callid"))
+                {
+                    callid = returnUrl.Substring(returnUrl.IndexOf("=") + 1);
+                }
+                //TempData["callIdForScoreandComment"] = returnUrl.Substring(returnUrl.IndexOf("=") + 1);
+                //TempData.Keep();
+            }
+
+            //For SSO 
+            if (!string.IsNullOrEmpty(permissionid))
+            {
+                var assignedCallToAgent = new PowerBiCommentService().GetAddAssignCallToAgent(Guid.Parse(permissionid));
+                if (assignedCallToAgent != null)
+                {
+                    var userDetail = new UserSetupServices().GetUserDetailById(assignedCallToAgent.AgentId ?? 0);
+                    if (userDetail != null)
+                    {
+                        if (userDetail.UserType == UserTypes.External)
+                        {
+                            var clientDetails = new HomePowerBIServices().GetPowerBiGetClientidByCallid(assignedCallToAgent.CallId ?? 0).FirstOrDefault();
+                            if (clientDetails != null && clientDetails.IsSSOEnable == true && !string.IsNullOrEmpty(clientDetails.SSOConfig))
+                            {
+                                return RedirectToAction("LoginSSO", "Account", new { clientCode = clientDetails.ClientCode, permissionid = permissionid, returnurl = returnUrl });
+                            }
+                        }
+                    }
+                }
+            }
+
+
+            HttpContext.Session["UserInfo"] = null;
+
+            String UnderMaintenace = ICap.Common.AppSettings.getAppSettingValue("Application", "Maintenance");
+
+            if (UnderMaintenace.ToUpper() == "TRUE")
+            {
+                return View("~/Views/Shared/Maintenance.cshtml");
+            }
+
+            if (User.Identity.IsAuthenticated)
+            {
+                if (!string.IsNullOrEmpty(permissionid))
+                {
+                    return Redirect("/home/index?permissionid=" + permissionid);
+                }
+                else if (!string.IsNullOrEmpty(callid))
+                {
+                    return Redirect("/home/index?callid=" + callid);
+                }
+                else
+                {
+                    return RedirectToAction("Index", "PowerBIDashboard");
+                }
+
+                //if (User.IsInRole("Analyst"))
+                //{
+                //    return RedirectToAction("AnalystDashboard", "Home");
+                //}
+                //else if (User.IsInRole("QA"))
+                //{
+                //    return RedirectToAction("QADashboard", "Home");
+                //}
+            }
+            ViewBag.ReturnUrl = returnUrl;
+            ViewBag.Permissionid = permissionid;
+            LoginViewModel model = new LoginViewModel();
+
+
+
+            #region Remember Me
+            var _RememberMe = Request.Cookies["RememberMe"];
+            if (_RememberMe != null && !string.IsNullOrEmpty(_RememberMe.Value))
+            {
+                bool rememberMe = false;
+                bool.TryParse(_RememberMe.Value, out rememberMe);
+                if (rememberMe)
+                {
+                    if (Request.Cookies["UserName"] != null)
+                    {
+                        model.UserName = Request.Cookies["UserName"].Value;
+                    }
+                    if (Request.Cookies["Password"] != null)
+                    {
+                        model.Password = Request.Cookies["Password"].Value;
+                    }
+                    model.RememberMe = true;
+                }
+            }
+            #endregion
+
+
+
+            return View(model);
+        }
+
+
+
+        //
+        // POST: /Account/Login
+        [HttpPost]
+        [AllowAnonymous]
+        // [ValidateAntiForgeryToken]
+        public async Task<ActionResult> Login(LoginViewModel model, string returnUrl, string permissionid, string callid)
+        {
+            if (!string.IsNullOrEmpty(returnUrl) && (returnUrl.Split('/')[1] == "Home" || returnUrl.Split('/')[1] == "home") && (returnUrl.Split('/')[2].Split('?')[0] == "Index" || returnUrl.Split('/')[2].Split('?')[0] == "index"))
+            {
+                if (String.IsNullOrEmpty(permissionid) && returnUrl.ToLower().Contains("permissionid"))
+                {
+                    permissionid = returnUrl.Substring(returnUrl.IndexOf("=") + 1);
+                }
+                else if (returnUrl.ToLower().Contains("callid"))
+                {
+                    callid = returnUrl.Substring(returnUrl.IndexOf("=") + 1);
+                }
+                //if (permissionid == null)
+                //{
+                //    permissionid = returnUrl.Substring(returnUrl.IndexOf("=") + 1);
+                //}
+                //TempData["callIdForScoreandComment"] = returnUrl.Substring(returnUrl.IndexOf("=") + 1);
+                //TempData.Keep();
+            }
+
+            ViewBag.Permissionid = permissionid;
+            ViewBag.Callid = callid;
+
+            // New SessionID set every login start
+            HttpContext Context = System.Web.HttpContext.Current;
+            SessionIDManager manager = new SessionIDManager();
+            string oldId = manager.GetSessionID(Context);
+            string newID = manager.CreateSessionID(Context);
+            bool isAdd = false, isRedir = false;
+
+            // Save a new session ID
+            manager.SaveSessionID(Context, newID, out isRedir, out isAdd);
+            // Get the fields using the below and create variables for storage
+            HttpApplication ctx = System.Web.HttpContext.Current.ApplicationInstance;
+            HttpModuleCollection mods = ctx.Modules;
+            SessionStateModule ssm = (SessionStateModule)mods.Get("Session");
+            FieldInfo[] fields = ssm.GetType().GetFields(BindingFlags.NonPublic | BindingFlags.Instance);
+            SessionStateStoreProviderBase store = null;
+            FieldInfo rqIdField = null, rqLockIdField = null, rqStateNotFoundField = null;
+            SessionStateStoreData rqItem = null;
+            // Assign to each variable the appropriate field values
+            foreach (FieldInfo field in fields)
+            {
+                if (field.Name.Equals("_store")) store = (SessionStateStoreProviderBase)field.GetValue(ssm);
+                if (field.Name.Equals("_rqId")) rqIdField = field;
+                if (field.Name.Equals("_rqLockId")) rqLockIdField = field;
+                if (field.Name.Equals("_rqSessionStateNotFound")) rqStateNotFoundField = field;
+                if (field.Name.Equals("_rqItem")) rqItem = (SessionStateStoreData)field.GetValue(ssm);
+            }
+            // Remove the previous session value
+            if (rqLockIdField != null)
+            {
+                object lockId = rqLockIdField.GetValue(ssm);
+
+                if ((lockId != null) && (oldId != null))
+                    store.RemoveItem(Context, oldId, lockId, rqItem);
+            }
+
+            if (rqStateNotFoundField != null)
+                rqStateNotFoundField.SetValue(ssm, true);
+            if (rqIdField != null)
+                rqIdField.SetValue(ssm, newID);
+            // New SessionID set every login End
+
+            if (!ModelState.IsValid)
+            {
+                return View(model);
+            }
+            CMDbContext Gdb = new CMDbContext();
+            var objresult = Gdb.AspNetUsers.Where(a => a.UserName.ToLower() == model.UserName.ToLower()).FirstOrDefault();
+            if (objresult != null)
+            {
+
+                //Check Is SSO enable for this client
+                if ((Request.Url + "").ToLower().Contains("icap-health.provana.com") != true && new PowerBiCommentService().IsSsoEnableForExternalUser(objresult.Id))
+                {
+                    Helper.LogException(null, "Cognito You are not allowed to login by UID & PWD. ID : " + objresult.Id + ", UserName: " + objresult.UserName);
+                    ModelState.AddModelError("", "Invalid username or password!");
+                    return View(model);
+                }
+
+                // This doen't count login failures towards lockout only two factor authentication
+                // To enable password failures to trigger lockout, change to shouldLockout: true
+                var user = await UserManager.FindAsync(model.UserName, model.Password);
+                if (user != null)
+                {
+                    var userDetail = new CommomServices().GetUserDetailByUserId(user.Id);
+                    if ((!userDetail.IsActive) || (userDetail.IsDeleted == 1))
+                    {
+                        ModelState.AddModelError("", "User is not activated.");
+                        return View(model);
+                    }
+                    else if (userDetail != null && userDetail.FirstLoginOn == null)
+                    {
+                        Session["FIRSTLOGIN_USERNAME"] = model.UserName;
+                        Session["FIRSTLOGIN_PASSWORD"] = model.Password;
+                        return RedirectToAction("FirstLoginResetPassword", "Account");
+                    }
+                    else if ((Session["MFAOTP_VALIDATED"] + "") != "true" && await new MFAServices().IsValidateOTPAsync(user.Id))
+                    {
+                        if (!string.IsNullOrEmpty(user.Email))
+                        {
+                            MFAResetSession();
+
+                            Session["MFAOTP_EMAIL"] = user.Email;
+                            Session["MFAOTP_USERNAME"] = user.UserName;
+                            Session["MFAOTP_PASSWORD"] = model.Password;
+                            Session["MFAOTP_VALIDATED"] = null;
+
+                            Session["RETURNURL"] = returnUrl;
+                            Session["PERMISSIONID"] = permissionid;
+                            Session["CALLID"] = callid;
+
+                            if (await MFASendOTP())
+                            {
+                                return RedirectToAction("MFAValidate", "Account");
+                            }
+                            else
+                            {
+                                return View(model);
+                            }
+                        }
+                        else
+                        {
+                            TempData[Notification.ERROR] = "Please reach out to Administrator.";
+                            return RedirectToAction("Login", "Account");
+                        }
+                    }
+                }
+                CMDbContext fdb = new CMDbContext();
+                var result = await SignInManager.PasswordSignInAsync(model.UserName, model.Password, model.RememberMe, shouldLockout: false);
+                if (result == SignInStatus.Success)
+                {
+                    // Store user's IP address and user-agent in session
+                    HttpContext.Session["UserIP"] = Request.UserHostAddress;
+                    HttpContext.Session["UserAgent"] = Request.UserAgent;
+                }
+
+                switch (result)
+                {
+                    case SignInStatus.Success:
+
+                        MFAResetSession();
+
+                        Session["RETURNURL"] = null;
+                        Session["PERMISSIONID"] = null;
+                        Session["CALLID"] = null;
+
+                        HttpContext.Session["UserInfo"] = null;
+                        //TempData["username"] = User.Identity.Name;
+                        //TempData.Keep("User.Identity.Name;");
+                        ApplicationDbContext db = new ApplicationDbContext();
+                        var userroles = user.Roles.Select(x => x.RoleId).ToList();
+                        //user.IsLoggedIn = true;
+                        //user.IsOnChat = false;
+                        //user.Active = true;
+                        //user.Lastactivitydatetime = DateTime.Now;
+
+
+
+                        //var updateIsInchat = await UserManager.UpdateAsync(user);
+                        //var userdata = fdb.AspNetUsers.Where(u => u.UserName.ToLower() == model.UserName.Trim().ToLower() && u.IsLoggedIn == true).FirstOrDefault();
+                        //if (userdata != null)
+                        //{
+                        //    userdata.Lastactivitydatetime = DateTime.Now;
+                        //    fdb.SaveChanges();
+                        //}
+                        // remove existing chat session
+
+
+
+                        //Response.Cookies["UserName"].Value = model.UserName.Trim();
+                        //Response.Cookies["Password"].Value = model.Password.Trim();
+
+
+                        if (model.RememberMe)
+                        {
+                            //Response.Cookies["UserName"].Expires = DateTime.Now.AddDays(30);
+                            //Response.Cookies["Password"].Expires = DateTime.Now.AddDays(30);
+                            //Response.Cookies["RememberMe"].Expires = DateTime.Now.AddDays(30);
+                            Response.Cookies.Add(new HttpCookie("UserName", model.UserName.Trim()) { Expires = DateTime.Now.AddDays(30), Secure = true, HttpOnly = true });
+                            Response.Cookies.Add(new HttpCookie("Password", model.Password.Trim()) { Expires = DateTime.Now.AddDays(30), Secure = true, HttpOnly = true });
+                            Response.Cookies.Add(new HttpCookie("RememberMe", model.RememberMe.ToString()) { Expires = DateTime.Now.AddDays(30), Secure = true, HttpOnly = true });
+                        }
+                        else
+                        {
+                            Response.Cookies.Add(new HttpCookie("UserName", "value") { Expires = DateTime.Now.AddDays(-1), Secure = true, HttpOnly = true });
+                            Response.Cookies.Add(new HttpCookie("Password", "value") { Expires = DateTime.Now.AddDays(-1), Secure = true, HttpOnly = true });
+                            Response.Cookies.Add(new HttpCookie("RememberMe", "value") { Expires = DateTime.Now.AddDays(-1), Secure = true, HttpOnly = true });
+
+                            //Response.Cookies["UserName"].Expires = DateTime.Now.AddDays(-1);
+                            //Response.Cookies["Password"].Expires = DateTime.Now.AddDays(-1);
+                            //Response.Cookies["RememberMe"].Expires = DateTime.Now.AddDays(-1);
+                        }
+                        //Response.Cookies["UserName"].Value = model.UserName.Trim();
+                        //Response.Cookies["Password"].Value = model.Password.Trim();
+                        //Response.Cookies["RememberMe"].Value = model.RememberMe.ToString();
+
+
+                        var dat = Response.Cookies["UserName"].Expires;
+                        var userdetail = fdb.TblUserDetails.Where(x => x.UserId == user.Id).FirstOrDefault();
+
+
+
+                        Session["UName"] = userdetail.UserName;
+                        //if (db.Roles.Any(x => userroles.Contains(x.Id) && x.Name.ToLower().Trim() == "QA".ToLower().Trim()))
+                        //{
+                        //    return RedirectToAction("QADashboard", "Home");
+                        //}
+                        HttpContext.Cache.Remove(model.UserName);
+                        CommomServices comservice = new CommomServices();
+                        //Create new session
+                        //SessionIDManager manager = new SessionIDManager();
+                        //HttpContext context = System.Web.HttpContext.Current;
+                        //string newID = manager.CreateSessionID(context);
+                        //bool redirected = false;
+                        //bool isAdded = false;
+                        //manager.SaveSessionID(context, newID, out redirected, out isAdded);
+                        comservice.LoginTimeTracker(userdetail.Id, newID);
+                        //End
+
+                        HttpContext.Session.Remove("SSO_CONFIGVM");
+                        HttpContext.Session.Remove("SSO_CLIENT_CODE");
+                        HttpContext.Session.Remove("SSO_PERMISSIONID");// = permissionid;
+                        HttpContext.Session.Remove("SSO_CALLID");// = callid;
+                        HttpContext.Session.Remove("SSO_RETURNURL");// = returnUrl;
+
+                        if (!string.IsNullOrEmpty(permissionid))
+                        {
+                            return Redirect("/home/index?permissionid=" + permissionid);
+                        }
+                        else if (!string.IsNullOrEmpty(callid))
+                        {
+                            return Redirect("/home/index?callid=" + callid);
+                        }
+                        else
+                        {
+                            return RedirectToAction("Index", "PowerBIDashboard");
+                        }
+
+                    //if (string.IsNullOrEmpty(permissionid))
+                    //{
+                    //    return RedirectToAction("Index", "PowerBIDashboard");
+                    //}
+                    //else
+                    //{
+                    //    return Redirect("/home/index?permissionid=" + permissionid);
+                    //}
+                    //return RedirectToLocal(returnUrl);
+                    case SignInStatus.LockedOut:
+                        return View("Lockout");
+                    case SignInStatus.RequiresVerification:
+                        return RedirectToAction("SendCode", new { ReturnUrl = returnUrl });
+                    case SignInStatus.Failure:
+                    default:
+                        ModelState.AddModelError("", "Invalid login attempt.");
+                        return PartialView(model);
+                }
+            }
+            else
+            {
+                ModelState.AddModelError("", "Invalid username or password!");
+                return View(model);
+            }
+        }
+
+        [AllowAnonymous]
+        public ActionResult FirstLoginResetPassword()
+        {
+            if (string.IsNullOrEmpty(Session["FIRSTLOGIN_USERNAME"] + "") || string.IsNullOrEmpty(Session["FIRSTLOGIN_PASSWORD"] + ""))
+            {
+                return RedirectToAction("Login", "Account");
+            }
+            return View();
+        }
+
+        [AllowAnonymous]
+        [HttpPost]
+        public async Task<ActionResult> FirstLoginResetPassword(ChangePasswordViewModel model)
+        {
+            var userName = Session["FIRSTLOGIN_USERNAME"] + "";
+            var password = Session["FIRSTLOGIN_PASSWORD"] + "";
+
+
+
+            if (string.IsNullOrEmpty(userName) || string.IsNullOrEmpty(password))
+            {
+                return RedirectToAction("Login", "Account");
+            }
+
+            if (ModelState.IsValid)
+            {
+                if (model.OldPassword == model.NewPassword)
+                {
+                    ModelState.AddModelError("ERROR", "Old password and New password can not be same.");
+                }
+                else
+                {
+                    var user = UserManager.FindAsync(userName, model.OldPassword).Result;
+                    if (user != null)
+                    {
+                        var resultChangePwd = UserManager.ChangePasswordAsync(user.Id, model.OldPassword, model.NewPassword).Result;
+                        if (resultChangePwd.Succeeded)
+                        {
+                            if ((Session["MFAOTP_VALIDATED"] + "") != "true" && await new MFAServices().IsValidateOTPAsync(user.Id))
+                            {
+                                new CommomServices().UpdateFirstLogin(user.Id);
+                                if (!string.IsNullOrEmpty(user.Email))
+                                {
+                                    MFAResetSession();
+
+                                    Session["MFAOTP_USERNAME"] = user.UserName;
+                                    Session["MFAOTP_PASSWORD"] = model.NewPassword;
+                                    Session["MFAOTP_EMAIL"] = user.Email;
+                                    Session["MFAOTP_VALIDATED"] = null;
+                                    if (await MFASendOTP())
+                                    {
+                                        return RedirectToAction("MFAValidate", "Account");
+                                    }
+                                    else
+                                    {
+                                        return RedirectToAction("Login", "Account");
+                                    }
+                                }
+                                else
+                                {
+                                    TempData[Notification.ERROR] = "Please reach out to Administrator.";
+                                    return RedirectToAction("Login", "Account");
+                                }
+                            }
+                            else
+                            {
+                                var result = SignInManager.PasswordSignInAsync(userName, model.NewPassword, true, shouldLockout: false).Result;
+                                switch (result)
+                                {
+                                    case SignInStatus.Success:
+
+                                        MFAResetSession();
+
+                                        new CommomServices().UpdateFirstLogin(user.Id);
+                                        CMDbContext fdb = new CMDbContext();
+                                        var userdetail = fdb.TblUserDetails.Where(x => x.UserId == user.Id).FirstOrDefault();
+                                        Session["UName"] = userdetail.UserName;
+                                        HttpContext.Cache.Remove(userdetail.UserName);
+                                        CommomServices comservice = new CommomServices();
+                                        //create new sessionid for logint tracker
+                                        //SessionIDManager manager = new SessionIDManager();
+                                        //HttpContext context = System.Web.HttpContext.Current;
+                                        //string newID = manager.CreateSessionID(context);
+                                        //bool redirected = false;
+                                        //bool isAdded = false;
+                                        //manager.SaveSessionID(context, newID, out redirected, out isAdded);
+                                        //End
+                                        comservice.LoginTimeTracker(userdetail.Id, Session.SessionID);
+
+
+                                        return RedirectToAction("Index", "PowerBIDashboard");
+                                    //if (User.IsInRole(UserRoles.Analyst))
+                                    //{
+                                    //    return RedirectToAction("AnalystDashboard", "Home");
+                                    //}
+                                    //else if (User.IsInRole(UserRoles.QA))
+                                    //{
+                                    //    return RedirectToAction("QADashboard", "Home");
+                                    //}
+                                    //else
+                                    //{
+                                    //    return RedirectToAction("AnalystDashboard", "Home");
+                                    //}
+                                    case SignInStatus.LockedOut:
+                                        return View("Lockout");
+                                    case SignInStatus.RequiresVerification:
+                                        return RedirectToAction("SendCode", new { ReturnUrl = "" });
+                                    case SignInStatus.Failure:
+                                    default:
+                                        ModelState.AddModelError("ERROR", "Invalid login attempt.");
+                                        break;
+                                }
+                            }
+                            //model.Message = "Your password has been changed successfully. Please login using new password";
+                        }
+                        else
+                        {
+                            if (resultChangePwd.Errors != null)
+                            {
+                                StringBuilder sb = new StringBuilder();
+                                foreach (var err in resultChangePwd.Errors)
+                                {
+                                    sb.Append(err);
+                                }
+                                ModelState.AddModelError("ERROR", sb.ToString());
+                            }
+                        }
+                    }
+                    else
+                    {
+                        ModelState.AddModelError("OldPassword", "Invalid old password.");
+                        //  return RedirectToAction("Login", "Account");
+                    }
+                }
+            }
+            else
+            {
+                //  ModelState.AddModelError("ERROR", "Please fill all required field!");
+            }
+            return View();
+        }
+
+
+
+        [AllowAnonymous]
+        [HttpGet]
+        public ActionResult MFAValidate()
+        {
+            if (User.Identity.IsAuthenticated)
+            {
+                return RedirectToAction("Index", "PowerBIDashboard");
+            }
+
+            if (Session["MFAOTP_USERNAME"] == null || Session["MFAOTP_PASSWORD"] == null)
+            {
+                return RedirectToAction("Login", "Account");
+            }
+
+            GetLeftRetrySecondAndCount(out int leftRetrySecond, out int leftRetryCount);
+            ViewBag.leftRetrySecond = leftRetrySecond;
+            ViewBag.leftRetryCount = leftRetryCount;
+
+            return View();
+        }
+
+        [AllowAnonymous]
+        [HttpPost]
+        public async Task<ActionResult> MFAValidate(MFAVM model, string btnSubmit)
+        {
+            if (User.Identity.IsAuthenticated)
+            {
+                return RedirectToAction("Index", "PowerBIDashboard");
+            }
+
+            ModelState.Clear();
+            int leftRetrySecond = 0;
+            int leftRetryCount = 0;
+
+
+
+            if (btnSubmit == "resend")
+            {
+                GetLeftRetrySecondAndCount(out leftRetrySecond, out leftRetryCount);
+
+                if (leftRetrySecond > 0)
+                {
+                    TempData[Notification.ERROR] = $"You can try after {leftRetrySecond} seconds.";
+                    return View(model);
+                }
+
+                if (leftRetryCount < 0)
+                {
+                    TempData[Notification.ERROR] = "You have exceeded the re-try limit.";
+                    return RedirectToAction("Login", "Account");
+                }
+
+                await MFASendOTP();
+                //TempData[Notification.SUCCESS] = "OTP has been send to your email";
+            }
+            else
+            {
+                if (await MFAValidateOTP(model.OTP) == true)
+                {
+                    return await Login(new LoginViewModel() { UserName = Session["MFAOTP_USERNAME"] + "", Password = Session["MFAOTP_PASSWORD"] + "" }, Convert.ToString(Session["RETURNURL"]), Convert.ToString(Session["PERMISSIONID"]), Convert.ToString(Session["CALLID"]));
+                }
+                else
+                {
+                    TempData["ErrorMessage"] = "Wrong Authentication Code";
+                }
+            }
+
+
+            GetLeftRetrySecondAndCount(out leftRetrySecond, out leftRetryCount);
+            ViewBag.leftRetrySecond = leftRetrySecond;
+            ViewBag.leftRetryCount = leftRetryCount;
+
+            return View();
+        }
+
+
+        private async Task<bool> MFASendOTP()
+        {
+            var mfaServices = new MFAServices();
+            bool res = await mfaServices.SendOTPAsync(Convert.ToString(Session["MFAOTP_EMAIL"]));
+            if (res == true)
+            {
+                Session["MFAOTP_SENDTIME"] = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
+
+                if (Session["MFAOTP_RETRIED"] != null)
+                {
+                    Session["MFAOTP_RETRIED"] = int.Parse(Session["MFAOTP_RETRIED"] + "") + 1;
+                }
+                else
+                {
+                    Session["MFAOTP_RETRIED"] = 1;
+                }
+                TempData["SuccessMessage"] = "Authentication Code has been sent to your registered Email ID";
+                return true;
+            }
+            else
+            {
+                TempData[Notification.ERROR] = "Failed to send OTP.";
+                return false;
+            }
+        }
+
+        private async Task<bool> MFAValidateOTP(string otp)
+        {
+
+            var mfaServices = new MFAServices();
+            bool res = await mfaServices.ValidateOTPAsync(Convert.ToString(Session["MFAOTP_EMAIL"]), otp);
+
+            if (res == true)
+            {
+                Session["MFAOTP_SENDTIME"] = null;
+                Session["MFAOTP_RETRIED"] = null;
+                Session["MFAOTP_VALIDATED"] = "true";
+
+                return true;
+            }
+            return false;
+        }
+
+        private void GetLeftRetrySecondAndCount(out int leftRetrySecond, out int leftRetryCount)
+        {
+            int MFA_OTP_RESENDINSECOND = 0;
+            int MFA_OTP_RETRYCOUNT = 0;
+
+            var appSettings = System.Configuration.ConfigurationManager.AppSettings;
+
+            int.TryParse(appSettings["MFA_OTP_RESENDINSECOND"], out MFA_OTP_RESENDINSECOND);
+            int.TryParse(appSettings["MFA_OTP_RETRYCOUNT"], out MFA_OTP_RETRYCOUNT);
+
+            leftRetrySecond = MFA_OTP_RESENDINSECOND;
+            leftRetryCount = MFA_OTP_RETRYCOUNT;
+
+            if (Session["MFAOTP_SENDTIME"] != null)
+            {
+                DateTime otpSendTime = DateTime.ParseExact(Session["MFAOTP_SENDTIME"].ToString(), "yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+                leftRetrySecond = (int)(MFA_OTP_RESENDINSECOND - (DateTime.UtcNow - otpSendTime).TotalSeconds);
+
+                if (Session["MFAOTP_RETRIED"] != null)
+                {
+                    leftRetryCount = MFA_OTP_RETRYCOUNT - int.Parse(Session["MFAOTP_RETRIED"].ToString());
+                }
+            }
+            else
+            {
+                leftRetrySecond = 0;
+            }
+        }
+
+
+        private void MFAResetSession()
+        {
+
+            Session["MFAOTP_USERNAME"] = null;
+            Session["MFAOTP_PASSWORD"] = null;
+            Session["MFAOTP_EMAIL"] = null;
+            Session["MFAOTP_VALIDATED"] = null;
+
+
+            Session["MFAOTP_RETRIED"] = null;
+            Session["MFAOTP_SENDTIME"] = null;
+        }
+
+
+        //
+        // GET: /Account/VerifyCode
+        [AllowAnonymous]
+        public async Task<ActionResult> VerifyCode(string provider, string returnUrl, bool rememberMe)
+        {
+            // Require that the user has already logged in via username/password or external login
+            if (!await SignInManager.HasBeenVerifiedAsync())
+            {
+                return View("Error");
+            }
+            return View(new VerifyCodeViewModel { Provider = provider, ReturnUrl = returnUrl, RememberMe = rememberMe });
+        }
+
+        //
+        // POST: /Account/VerifyCode
+        [HttpPost]
+        [AllowAnonymous]
+        [ValidateAntiForgeryToken]
+        public async Task<ActionResult> VerifyCode(VerifyCodeViewModel model)
+        {
+            if (!ModelState.IsValid)
+            {
+                return View(model);
+            }
+
+            // The following code protects for brute force attacks against the two factor codes. 
+            // If a user enters incorrect codes for a specified amount of time then the user account 
+            // will be locked out for a specified amount of time. 
+            // You can configure the account lockout settings in IdentityConfig
+            var result = await SignInManager.TwoFactorSignInAsync(model.Provider, model.Code, isPersistent: model.RememberMe, rememberBrowser: model.RememberBrowser);
+            switch (result)
+            {
+                case SignInStatus.Success:
+                    return RedirectToLocal(model.ReturnUrl);
+                case SignInStatus.LockedOut:
+                    return View("Lockout");
+                case SignInStatus.Failure:
+                default:
+                    ModelState.AddModelError("", "Invalid code.");
+                    return View(model);
+            }
+        }
+
+        #region Registration
+
+        [Authorize(Roles = UserRoles.CAdmin)]
+        public ActionResult RegisterationList()
+        {
+            return PartialView("_RegisterationList", new UserSetupServices().GetUsersByRole());
+        }
+
+
+        [Authorize(Roles = UserRoles.CAdmin)]
+        public ActionResult FilteredRegisterationList(string search)
+        {
+            //using (CMDbContext dbContext = new CMDbContext())
+            //{
+            //    return PartialView("_RegisterationList", dbContext.GetAllUser(null));
+            //}
+            return PartialView("_RegisterationList", new UserSetupServices().GetFilteredUsers(search));
+        }
+        [Authorize(Roles = UserRoles.CAdmin)]
+        public ActionResult Register(string id)
+        {
+            RegisterViewModel model = new RegisterViewModel();
+            ViewBag.Clients = new AnalystServices().GetClients();
+            ViewBag.Role = new CommomServices().GetAspNetRoles();
+
+            if (!string.IsNullOrEmpty(id))
+            {
+                CMDbContext dbContext = new CMDbContext();
+                var item = dbContext.GetAllUser(id).FirstOrDefault();
+                if (item != null)
+                {
+                    model.RoleId = UserManager.GetRoles(id).ToList();
+                    model.Email = item.Email;
+                    model.UserId = item.Id;
+                    model.Name = item.Name;
+                    model.UserName = item.UserName;
+                    model.ClientIds = new AnalystServices().ClientList(item.UserDetailId).Select(x => x.Id).ToList();
+                }
+            }
+            return View(model);
+        }
+
+        [Authorize(Roles = UserRoles.CAdmin)]
+        public int deleteUser(string id)
+        {
+            try
+            {
+                //   RegisterViewModel model = new RegisterViewModel();
+                using (CMDbContext dbContext = new CMDbContext())
+                {
+                    var deletedata = dbContext.AspNetUsers.Where(x => x.Id == id).FirstOrDefault();
+                    dbContext.AspNetUsers.Remove(deletedata);
+                    dbContext.SaveChanges();
+                    //ViewBag.Role = dbContext.AspNetRoles.ToList();
+                    // ViewBag.AllUsers = dbContext.GetAllUser(null).ToList();
+                }
+                return 1;
+            }
+            catch (Exception e)
+            {
+                return -1;
+            }
+            //return RedirectToAction("Register", "Account");
+        }
+
+
+        //[Authorize(Roles = "Analyst")]
+        //public ActionResult EditRegister(string id)
+        //{
+        //    ViewBag.edituser = id;
+        //    RegisterViewModel model = new RegisterViewModel();
+        //    using (CMDbContext dbContext = new CMDbContext())
+        //    {
+        //        ViewBag.Role = dbContext.AspNetRoles.ToList();
+        //        var eidtdata = dbContext.GetAllUser(id).ToList();
+        //        model.RoleId = UserManager.GetRoles(id).ToList();
+
+        //        foreach (var item in eidtdata)
+        //        {
+        //            model.Email = item.Email;
+        //            //model.Roles = item.Role;
+        //            model.UserId = item.Id;
+        //            model.Name = item.Name;
+        //            model.UserName = item.UserName;
+        //        }
+        //        ViewBag.AllUsers = dbContext.GetAllUser(null).ToList();
+        //    }
+        //    return View("Register", model);
+        //}
+
+
+        [HttpPost]
+        [Authorize(Roles = UserRoles.CAdmin)]
+        [ValidateAntiForgeryToken]
+        public async Task<ActionResult> Register(RegisterViewModel model)
+        {
+
+            if (ModelState.IsValid)
+            {
+                if (string.IsNullOrEmpty(model.UserId))
+                {
+                    var user = UserManager.FindByName(model.UserName);
+                    if (user != null)
+                    {
+                        TempData[Notification.ERROR] = "Username already exist.";
+                    }
+                    else
+                    {
+                        user = new ApplicationUser { UserName = model.UserName, Email = model.Email, EmailConfirmed = true };
+                        var result = await UserManager.CreateAsync(user, model.Password);
+                        if (result.Succeeded)
+                        {
+                            await UserManager.AddToRolesAsync(user.Id, model.RoleId.ToArray());
+                            int affectedRow = new RegistrationServices().SaveRegistration(model, user.Id);
+                            if (affectedRow > 0)
+                            {
+                                TempData[Notification.SUCCESS] = "User created successfully.";
+                                return RedirectToAction("Register", "Account");
+                            }
+                            else
+                            {
+                                TempData[Notification.ERROR] = "Failed to create user.";
+                            }
+                        }
+                        else
+                        {
+                            if (result.Errors != null)
+                            {
+                                StringBuilder sb = new StringBuilder();
+                                foreach (var err in result.Errors)
+                                {
+                                    sb.Append(err);
+                                }
+                                ModelState.AddModelError("", sb.ToString());
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    var user = UserManager.Users.FirstOrDefault(x => x.UserName == model.UserName && x.Id != model.UserId);
+                    if (user != null)
+                    {
+                        TempData[Notification.ERROR] = "Username already exist.";
+                    }
+                    else
+                    {
+                        var oldUser = UserManager.FindById(model.UserId);
+                        var oldRoles = UserManager.GetRoles(model.UserId);
+
+                        if (oldUser != null)
+                        {
+                            var isSendEmail = false;
+                            if (oldUser.Email != model.Email)
+                                isSendEmail = true;
+
+                            oldUser.UserName = model.UserName;
+                            oldUser.Email = model.Email;
+                            var result = UserManager.Update(oldUser);
+                            if (result.Succeeded)
+                            {
+                                await UserManager.RemoveFromRolesAsync(model.UserId, oldRoles.ToArray());
+                                await UserManager.AddToRolesAsync(oldUser.Id, model.RoleId.ToArray());
+                            }
+
+                            if (!string.IsNullOrEmpty(model.Password))
+                            {
+                                UserManager.RemovePassword(oldUser.Id);
+                                UserManager.AddPassword(oldUser.Id, model.Password);
+                            }
+
+                            int affectedRow = new RegistrationServices().SaveRegistration(model, model.UserId);
+                            if (affectedRow <= 0)
+                            {
+                                TempData[Notification.ERROR] = "Failed to update user.";
+                            }
+                            else
+                            {
+                                string message = "User updated successfully.";
+                                if (isSendEmail)
+                                {
+                                    var code = await UserManager.GeneratePasswordResetTokenAsync(model.UserId);
+                                    var callbackUrl = Url.Action("SetPassword", "Account", new { userid = model.UserId, code = code }, protocol: Request.Url.Scheme);
+                                    //  string mailbody = "<strong>Hi " + model.UserName + ",</strong> </br></br>Your email address has been updated in ICAP for username  <strong>" + model.UserName + "</strong>, To create your new password click on this" + " <a href=\"" + callbackUrl + "\">link</a>";
+                                    if (Convert.ToBoolean(SendEmail.SendEmailForPasswordSetup(model.Name, model.Email, callbackUrl, Url.Action("Login", "Account", new { }, protocol: Request.Url.Scheme))))
+                                    {
+                                        // message = "User Created Successfully! Link to setup password has been sent to the user's registered email id.";
+                                    }
+                                    else
+                                    {
+                                        //   message = "User Created Successfully! But Unable to send the email to the user's registered email id.";
+                                    }
+                                }
+
+
+
+                                if (User.Identity.GetUserId() == model.UserId && !string.IsNullOrEmpty(model.Password))
+                                {
+                                    LogOff("empty");
+                                }
+                                TempData[Notification.SUCCESS] = message;
+                                return RedirectToAction("Register", "Account");
+                            }
+                        }
+                        else
+                        {
+                            TempData[Notification.ERROR] = "User does not exist.";
+                        }
+                    }
+                }
+            }
+            else
+            {
+                TempData[Notification.ERROR] = "Please fill all required field.";
+            }
+
+            ViewBag.Clients = new AnalystServices().GetClients();
+            ViewBag.Role = new CommomServices().GetAspNetRoles();
+            return View(model);
+
+            //ApplicationDbContext db = new ApplicationDbContext();
+            //CMDbContext dbContext = new CMDbContext();
+            //bool sendmail = true;
+            //string message = string.Empty;
+            //string userid = string.Empty;
+
+            //if (ModelState.IsValid)
+            //{
+            //    var result = (dynamic)null;
+            //    var user = (dynamic)null;
+            //    if (model.UserId == null)
+            //    {
+            //        if (model.RoleId == null)
+            //        {
+            //            ViewBag.edituser = model.UserId;
+            //            ViewBag.exist = "role";
+            //            ViewBag.Role = dbContext.AspNetRoles.ToList();
+            //            ViewBag.AllUsers = dbContext.GetAllUser(null).ToList();
+            //            return View(model);
+            //        }
+            //        var existdata = dbContext.AspNetUsers.Where(x => x.Email == model.Email).FirstOrDefault();
+            //        if (existdata != null)
+            //        {
+            //            ViewBag.Role = dbContext.AspNetRoles.ToList();
+            //            ViewBag.AllUsers = dbContext.GetAllUser(null).ToList();
+            //            ViewBag.exist = "exist";
+            //            return View(model);
+            //        }
+            //        //int firmId = FirmInfo.GetFirmId();
+            //        user = new ApplicationUser { UserName = model.UserName, Email = model.Email, EmailConfirmed = true };
+            //        result = await UserManager.CreateAsync(user);
+            //        TblUserDetail detail = new TblUserDetail();
+            //        detail.UserName = model.Name;
+            //        detail.UserId = user.Id;
+            //        dbContext.TblUserDetails.Add(detail);
+            //        dbContext.SaveChanges();
+            //        if (result.Succeeded)
+            //        {
+            //            await UserManager.AddToRolesAsync(user.Id, model.RoleId.ToArray());
+            //        }
+            //    }
+            //    else
+            //    {
+            //        sendmail = false;
+            //        var oldUser = UserManager.FindById(model.UserId);
+            //        var oldRoles = UserManager.GetRoles(oldUser.Id);
+            //        var Name = dbContext.TblUserDetails.Where(x => x.UserId == oldUser.Id).FirstOrDefault();
+            //        if (Name.UserName != model.Name)
+            //        {
+            //            //sendmail = true;
+            //            Name.UserName = model.Name;
+            //            dbContext.SaveChanges();
+            //        }
+            //        if (oldUser.Email != model.Email)
+            //        {
+            //            sendmail = true;
+            //            oldUser.Email = model.Email;
+            //        }
+            //        if (oldUser.UserName != model.UserName)
+            //        {
+            //            //sendmail = true;
+            //            oldUser.UserName = model.UserName;
+            //        }                  
+
+            //        var userId = oldUser.Id;
+            //        userid = userId;
+            //        //oldUser.FullName = model.Fullname;
+            //        user = oldUser;
+            //        result = UserManager.Update(oldUser);
+            //        if (result.Succeeded)
+            //        {
+
+            //            await UserManager.RemoveFromRolesAsync(model.UserId, oldRoles.ToArray());
+            //            await UserManager.AddToRolesAsync(oldUser.Id, model.RoleId.ToArray());
+            //        }
+
+            //        if (User.Identity.GetUserId() == userId)
+            //        {
+            //            LogOff("empty");
+            //        }
+
+            //        if (result.Succeeded && sendmail)
+            //        {
+
+            //            //ViewBag.Role = db.Roles.Where(x => x.Name.ToLower() != "GatewayAdmin".ToLower()).Select(x => new { x.Id, x.Name }).AsEnumerable().Select(x => new SelectListItem { Text = x.Name, Value = x.Name }).ToList();
+            //            //return RedirectToAction("Index", "Home", new { EnableTab = "SetupFirmUser", msg = "User Created Successfully! Link to setup password has been sent to the user's registered email id." });
+            //            ViewBag.Role = dbContext.AspNetRoles.ToList();
+            //            ViewBag.AllUsers = dbContext.GetAllUser(null).ToList();
+            //            ViewBag.exist = "Update";
+            //            return RedirectToAction("Register", "Account", new { Message = message });
+            //        }
+            //        else if (result.Succeeded)
+            //        {
+            //            ViewBag.Role = dbContext.AspNetRoles.ToList();
+            //            ViewBag.AllUsers = dbContext.GetAllUser(null).ToList();
+            //            ViewBag.exist = "Update";
+            //            return RedirectToAction("Register", "Account", new { Message = "Updated Successfully!" });
+            //        }
+            //    }
+
+            //    if (result.Succeeded && sendmail)
+            //    {
+            //        var code = await UserManager.GeneratePasswordResetTokenAsync(user.Id);
+            //        var callbackUrl = Url.Action("SetPassword", "Account", new { userid = user.Id, code = code }, protocol: Request.Url.Scheme);
+            //        string mailbody = "<strong>Hi " + user.UserName + ",</strong> </br></br>Your User profile has been created in ICAP with the username <strong>" + user.UserName + "</strong>, To set your password click on this " + " <a href=\"" + callbackUrl + "\">link</a>";
+
+            //        if (Convert.ToBoolean(await SendEmail.SendEmailForPasswordSetup(user.Id, user.UserName, model.Name, user.Email, mailbody)))
+            //        {
+            //            message = "User Created Successfully! Link to setup password has been sent to the user's registered email id.";
+            //        }
+            //        else
+            //        {
+            //            message = "User Created Successfully! But Unable to send the email to the user's registered email id.";
+            //        }
+            //        ViewBag.Role = dbContext.AspNetRoles.ToList();
+            //        //return RedirectToAction("Index", "Home", new { EnableTab = "SetupFirmUser",msg = "User Created Successfully! Link to setup password has been sent to the user's registered email id." });
+            //        return RedirectToAction("Register", "Account", new { Message = message });
+            //    }
+            //    // model.Username = FirmInfo.GetUserName(model.UserId);
+            //    AddErrors(result);
+            //}
+            //else
+            //{
+            //    //ViewBag.exist = "role";
+            //    ViewBag.edituser = model.UserId;
+            //}
+
+            //ViewBag.Role = dbContext.AspNetRoles.ToList();
+            //ViewBag.AllUsers = dbContext.GetAllUser(null).ToList();
+
+            //// If we got this far, something failed, redisplay form
+            //return View(model);
+        }
+
+
+        private List<UserListViewModel> GetActiveUserListWithRoles(string UserID)
+        {
+            cMDbContext = new CMDbContext();
+            List<UserListViewModel> users = new List<UserListViewModel>();
+            var record = cMDbContext.GetAllUser(UserID).ToList();
+            foreach (var item in record)
+            {
+                UserListViewModel setdata = new UserListViewModel();
+                setdata.EmailAddress = item.Email;
+                setdata.Id = item.Id;
+                setdata.UserName = item.UserName;
+                setdata.Roles = item.Role;
+                setdata.FullName = item.Name;
+                users.Add(setdata);
+            }
+            return users;
+        }
+
+        #endregion
+
+
+
+        //
+        // GET: /Account/ConfirmEmail
+        [AllowAnonymous]
+        public async Task<ActionResult> ConfirmEmail(string userId, string code)
+        {
+            if (userId == null || code == null)
+            {
+                return View("Error");
+            }
+            var result = await UserManager.ConfirmEmailAsync(userId, code);
+            return View(result.Succeeded ? "ConfirmEmail" : "Error");
+        }
+
+        //
+        // GET: /Account/ForgotPassword
+        [AllowAnonymous]
+        public ActionResult ForgotPassword()
+        {
+            return View();
+        }
+
+        //
+        // POST: /Account/ForgotPassword
+        [HttpPost]
+        [AllowAnonymous]
+        //[ValidateAntiForgeryToken]
+        public async Task<ActionResult> ForgotPassword(ForgotPasswordViewModel model)
+        {
+            if (ModelState.IsValid)
+            {
+                CMDbContext db = new CMDbContext();
+                var user = (dynamic)null;
+
+                user = await UserManager.FindByEmailAsync(model.Email);
+
+                if (user == null)
+                {
+                    ViewBag.Errormessage = "User Does not exists.";
+
+                    return PartialView(model);
+                }
+
+                if ((Request.Url + "").ToLower().Contains("icap-health.provana.com") != true && new PowerBiCommentService().IsSsoEnableForExternalUser(user.Id))
+                {
+                    ViewBag.Errormessage = "User Does not exists.";
+
+                    return PartialView(model);
+                }
+
+                var code = await UserManager.GeneratePasswordResetTokenAsync(user.Id);
+
+                var callbackUrl = Url.Action("ResetPassword", "Account", new { userId = user.Id, code = code, Date = DateTime.Now }, protocol: Request.Url.Scheme);
+
+                var userDetail = new UserSetupServices().GetUserDetailByUserId(user.Id);
+
+                if (userDetail == null)
+                {
+                    ViewBag.Errormessage = "User profile detail does not exist.";
+
+                    return PartialView(model);
+                }
+                //await UserManager.SendEmailAsync(user.Id, "Reset Password", "Please reset your password by clicking here: <a href=\"" + callbackUrl + "\">link</a>");
+                //string EmailMessage = "<strong>Hi " + user.UserName + ",</strong> </br></br> Click on this <a href=\"" + callbackUrl + "\">link</a> to reset your password.";
+
+                if (SendEmail.SendEmailForPasswordSetup(userDetail.UserName, user.Email, callbackUrl, Url.Action("Login", "Account", new { }, protocol: Request.Url.Scheme)))
+                {
+                    ViewBag.Link = callbackUrl;
+                    return PartialView("ForgotPasswordConfirmation");
+                }
+                else
+                {
+                    return PartialView(model);
+                }
+            }
+
+
+            return PartialView(model);
+        }
+
+        //
+        // GET: /Account/ForgotPasswordConfirmation
+        [AllowAnonymous]
+        public ActionResult ForgotPasswordConfirmation()
+        {
+            return View();
+        }
+
+        //
+        // GET: /Account/ResetPassword
+        [AllowAnonymous]
+        public ActionResult ResetPassword(string code, string userId, DateTime date)
+        {
+            //return code == null ? View("Error") : View();
+
+            ResetPasswordViewModel obj = new ResetPasswordViewModel();
+            obj.userId = userId;
+            obj.Code = code;
+
+
+            int linkexpired = Convert.ToInt32(ConfigurationManager.AppSettings["TokenLifespan"]);
+            int h = Convert.ToInt32((DateTime.Now - date).TotalHours);
+            if ((DateTime.Now - date).TotalHours > linkexpired)
+            {
+                obj.ModalDialogCaption = "Link Expired";
+                obj.Message = "The Reset Password Link Is Expired. Please Request Another Reset Password Email From The Forgot Password Page";/* "This link has expired. To reset your password, click on \"Forgot your password\" on the Login page";*/
+                return RedirectToAction("ResetPasswordError", "Account");
+                //return View(obj);
+            }
+            //bool te = UserManager.VerifyUserToken(userId, "ResetPassword", code);
+            //if (te)
+            //{
+            //    obj.ModalDialogCaption = "Link Expired";
+            //    obj.Message = "The Reset Password Link Is No Longer Valid. Please Request Another Reset Password Email From The Forgot Password Page.";
+            //    return RedirectToAction("ResetPasswordError", "Account");
+            //}
+            return code == null ? View("Error") : View(obj);
+        }
+
+        [AllowAnonymous]
+        public ActionResult ResetPasswordError()
+        {
+            ResetPasswordViewModel obj = new ResetPasswordViewModel();
+            obj.ModalDialogCaption = "Link Expired";
+            obj.Message = "The Reset Password Link Is Expired. Please Request Another Reset Password Email From The Forgot Password Page .";/* "This link has expired. To reset your password, click on \"Forgot your password\" on the Login page";*/
+            return View(obj);
+        }
+        //
+        // POST: /Account/ResetPassword
+        [HttpPost]
+        [AllowAnonymous]
+
+        public async Task<ActionResult> ResetPassword(ResetPasswordViewModel model)
+        {
+            if (!ModelState.IsValid)
+            {
+                return View(model);
+            }
+            //var user = await UserManager.FindByEmailAsync(model.Email);
+            //if (user == null)
+            //{
+            //    // Don't reveal that the user does not exist
+            //    return RedirectToAction("ResetPasswordConfirmation", "Account");
+            //}
+            var result = await UserManager.ResetPasswordAsync(model.userId, model.Code, model.Password);
+            //if (result.Succeeded)
+            //{
+            //    return RedirectToAction("ResetPasswordConfirmation", "Account");
+            //}
+
+            // AddErrors(result);
+            if (result.Errors.Contains("Invalid token."))
+            {
+                foreach (var error in result.Errors)
+                {
+                    ModelState.AddModelError("", "The Reset Password Link Is No Longer Valid. Please Request Another Reset Password Email From The Forgot Password Page.");
+                }
+                model.ModalDialogCaption = "Link Expired";
+                model.Message = "The Reset Password Link Is No Longer Valid. Please Request Another Reset Password Email From The Forgot Password Page.";// "The Reset Password Link Is Expired. Please Request Another Reset Password Email From The Forgot Password Page.";
+                                                                                                                                                         // result.Errors = new string[]{ "The Reset Password Link Is No Longer Valid. Please Request Another Reset Password Email From The Forgot Password Page." };
+
+            }
+            if (result.Succeeded)
+            {
+                model.ModalDialogCaption = "Success";
+                model.Message = "Your Password has been setup. Please login using your password.";
+                return RedirectToAction("ResetPasswordConfirmation", "Account");
+            }
+            else
+            if (!result.Succeeded)
+            {
+                return View(model);
+            }
+
+            return View(model);
+        }
+        //
+        // GET: /Account/ResetPasswordConfirmation
+        [AllowAnonymous]
+        public ActionResult ResetPasswordConfirmation()
+        {
+            return View();
+        }
+
+        //
+        // POST: /Account/ExternalLogin
+        [HttpPost]
+        [AllowAnonymous]
+        [ValidateAntiForgeryToken]
+        public ActionResult ExternalLogin(string provider, string returnUrl)
+        {
+            // Request a redirect to the external login provider
+            return new ChallengeResult(provider, Url.Action("ExternalLoginCallback", "Account", new { ReturnUrl = returnUrl }));
+        }
+
+        //
+        // GET: /Account/SendCode
+        [AllowAnonymous]
+        public async Task<ActionResult> SendCode(string returnUrl, bool rememberMe)
+        {
+            var userId = await SignInManager.GetVerifiedUserIdAsync();
+            if (userId == null)
+            {
+                return View("Error");
+            }
+            var userFactors = await UserManager.GetValidTwoFactorProvidersAsync(userId);
+            var factorOptions = userFactors.Select(purpose => new SelectListItem { Text = purpose, Value = purpose }).ToList();
+            return View(new SendCodeViewModel { Providers = factorOptions, ReturnUrl = returnUrl, RememberMe = rememberMe });
+        }
+
+        //
+        // POST: /Account/SendCode
+        [HttpPost]
+        [AllowAnonymous]
+        [ValidateAntiForgeryToken]
+        public async Task<ActionResult> SendCode(SendCodeViewModel model)
+        {
+            if (!ModelState.IsValid)
+            {
+                return View();
+            }
+
+            // Generate the token and send it
+            if (!await SignInManager.SendTwoFactorCodeAsync(model.SelectedProvider))
+            {
+                return View("Error");
+            }
+            return RedirectToAction("VerifyCode", new { Provider = model.SelectedProvider, ReturnUrl = model.ReturnUrl, RememberMe = model.RememberMe });
+        }
+
+        //
+        // GET: /Account/ExternalLoginCallback
+        [AllowAnonymous]
+        public async Task<ActionResult> ExternalLoginCallback(string returnUrl)
+        {
+            var loginInfo = await AuthenticationManager.GetExternalLoginInfoAsync();
+            if (loginInfo == null)
+            {
+                return RedirectToAction("Login");
+            }
+
+            // Sign in the user with this external login provider if the user already has a login
+            var result = await SignInManager.ExternalSignInAsync(loginInfo, isPersistent: false);
+            switch (result)
+            {
+                case SignInStatus.Success:
+                    return RedirectToLocal(returnUrl);
+                case SignInStatus.LockedOut:
+                    return View("Lockout");
+                case SignInStatus.RequiresVerification:
+                    return RedirectToAction("SendCode", new { ReturnUrl = returnUrl, RememberMe = false });
+                case SignInStatus.Failure:
+                default:
+                    // If the user does not have an account, then prompt the user to create an account
+                    ViewBag.ReturnUrl = returnUrl;
+                    ViewBag.LoginProvider = loginInfo.Login.LoginProvider;
+                    return View("ExternalLoginConfirmation", new ExternalLoginConfirmationViewModel { Email = loginInfo.Email });
+            }
+        }
+
+        //
+        // POST: /Account/ExternalLoginConfirmation
+        [HttpPost]
+        [AllowAnonymous]
+        [ValidateAntiForgeryToken]
+        public async Task<ActionResult> ExternalLoginConfirmation(ExternalLoginConfirmationViewModel model, string returnUrl)
+        {
+            if (User.Identity.IsAuthenticated)
+            {
+                return RedirectToAction("AnalystDashboard", "Manage");
+            }
+
+            if (ModelState.IsValid)
+            {
+                // Get the information about the user from the external login provider
+                var info = await AuthenticationManager.GetExternalLoginInfoAsync();
+                if (info == null)
+                {
+                    return View("ExternalLoginFailure");
+                }
+                var user = new ApplicationUser { UserName = model.Email, Email = model.Email };
+                var result = await UserManager.CreateAsync(user);
+                if (result.Succeeded)
+                {
+                    result = await UserManager.AddLoginAsync(user.Id, info.Login);
+                    if (result.Succeeded)
+                    {
+                        await SignInManager.SignInAsync(user, isPersistent: false, rememberBrowser: false);
+                        return RedirectToLocal(returnUrl);
+                    }
+                }
+                AddErrors(result);
+            }
+
+            ViewBag.ReturnUrl = returnUrl;
+            return View(model);
+        }
+
+        //
+        // POST: /Account/LogOff
+        //[HttpPost]
+        //[ValidateAntiForgeryToken]
+        //public ActionResult LogOff()
+        //{
+        //    AuthenticationManager.SignOut(DefaultAuthenticationTypes.ApplicationCookie);
+        //    return RedirectToAction("Login", "Account");
+        //}
+
+        //
+        // GET: /Account/ExternalLoginFailure
+        [AllowAnonymous]
+        public ActionResult ExternalLoginFailure()
+        {
+            return View();
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                if (_userManager != null)
+                {
+                    _userManager.Dispose();
+                    _userManager = null;
+                }
+
+                if (_signInManager != null)
+                {
+                    _signInManager.Dispose();
+                    _signInManager = null;
+                }
+            }
+
+            base.Dispose(disposing);
+        }
+
+        #region Helpers
+        // Used for XSRF protection when adding external 
+
+        private const string XsrfKey = "XsrfId";
+
+        private IAuthenticationManager AuthenticationManager
+        {
+            get
+            {
+                return HttpContext.GetOwinContext().Authentication;
+            }
+        }
+
+        private void AddErrors(IdentityResult result)
+        {
+            foreach (var error in result.Errors)
+            {
+                ModelState.AddModelError("", error);
+            }
+        }
+
+        private ActionResult RedirectToLocal(string returnUrl)
+        {
+            //if (Url.IsLocalUrl(returnUrl))
+            //{
+            //    return Redirect("/"); //returnUrl
+            //}
+            // return RedirectToAction("AnalystDashboard", "Home");
+            return RedirectToAction("Index", "PowerBIDashboard");
+        }
+
+        internal class ChallengeResult : HttpUnauthorizedResult
+        {
+            public ChallengeResult(string provider, string redirectUri)
+                : this(provider, redirectUri, null)
+            {
+            }
+
+            public ChallengeResult(string provider, string redirectUri, string userId)
+            {
+                LoginProvider = provider;
+                RedirectUri = redirectUri;
+                UserId = userId;
+            }
+
+            public string LoginProvider { get; set; }
+            public string RedirectUri { get; set; }
+            public string UserId { get; set; }
+
+            public override void ExecuteResult(ControllerContext context)
+            {
+                var properties = new AuthenticationProperties { RedirectUri = RedirectUri };
+                if (UserId != null)
+                {
+                    properties.Dictionary[XsrfKey] = UserId;
+                }
+                context.HttpContext.GetOwinContext().Authentication.Challenge(properties, LoginProvider);
+            }
+        }
+        #endregion
+
+
+
+        [AllowAnonymous]
+        [HttpGet]
+        public ActionResult SetPassword(string userid, string code)
+        {
+            InitialSetPasswordViewModel obj = new InitialSetPasswordViewModel();
+            obj.UserId = userid;
+            obj.Code = code;
+            return View(obj);
+        }
+
+
+        [AllowAnonymous]
+        [HttpPost]
+
+        public async Task<ActionResult> SetPassword(InitialSetPasswordViewModel model)
+        {
+            if (!ModelState.IsValid)
+            {
+                return View(model);
+            }
+            var user = await UserManager.FindByIdAsync(model.UserId);
+            if (user == null)
+            {
+                return View(model);
+            }
+
+            else
+            {
+                var result = await UserManager.ResetPasswordAsync(user.Id, model.Code, model.Password);
+                AddErrors(result);
+                if (result.Errors.Contains("Invalid token."))
+                {
+                    model.ModalDialogCaption = "Link Expired";
+                    model.Message = "This link has expired. To reset your password, click on \"Forgot your password\" on the Login page";
+                }
+                if (result.Succeeded)
+                {
+                    model.ModalDialogCaption = "Success";
+                    model.Message = "Your Password has been setup. Please login using your password.";
+                }
+            }
+
+            return View(model);
+        }
+
+
+        // POST: /Account/LogOff
+        [HttpPost]
+        //[ValidateAntiForgeryToken]
+        [AllowAnonymous]
+        public ActionResult LogOff(string blank)
+        {
+            var logOffReturnUrl = LogOffUserReturnUrl();
+            HttpContext.GetOwinContext().Authentication.SignOut();
+            HttpContext.Cache.Remove(User.Identity.Name);
+            AuthenticationManager.SignOut(DefaultAuthenticationTypes.ApplicationCookie);
+            CommomServices comservice = new CommomServices();
+            UserInfo userDetail = (UserInfo)Session["UserInfo"];
+            if (userDetail != null)
+            {
+                comservice.LogoutTimeTracker(userDetail.Id, Session.SessionID, 0);
+            }
+            HttpContext.Session["UserInfo"] = null;
+            Session.Clear();
+            Session.Abandon();
+
+            return Redirect(logOffReturnUrl);
+            //return RedirectToAction("Login", "Account");
+        }
+
+        [HttpGet]
+        //[ValidateAntiForgeryToken]
+        [AllowAnonymous]
+        public ActionResult LogOff()
+        {
+            var logOffReturnUrl = LogOffUserReturnUrl();
+            HttpContext.GetOwinContext().Authentication.SignOut();
+            HttpContext.Cache.Remove(User.Identity.Name);
+            AuthenticationManager.SignOut(DefaultAuthenticationTypes.ApplicationCookie);
+            CommomServices comservice = new CommomServices();
+            UserInfo userDetail = (UserInfo)Session["UserInfo"];
+            if (userDetail != null)
+            {
+                comservice.LogoutTimeTracker(userDetail.Id, Session.SessionID, 0);
+            }
+            HttpContext.Session["UserInfo"] = null;
+            Session.Clear();
+            Session.Abandon();
+
+            return Redirect(logOffReturnUrl);
+            //return RedirectToAction("Login", "Account");
+        }
+
+        //[HttpPost]
+        //  [ValidateAntiForgeryToken]
+        [AllowAnonymous]
+        public ActionResult LogOffUser()
+        {
+            var logOffReturnUrl = LogOffUserReturnUrl();
+            HttpContext.GetOwinContext().Authentication.SignOut();
+            HttpContext.Cache.Remove(User.Identity.Name);
+            AuthenticationManager.SignOut(DefaultAuthenticationTypes.ApplicationCookie);
+            CommomServices comservice = new CommomServices();
+            UserInfo userDetail = (UserInfo)Session["UserInfo"];
+            if (userDetail != null)
+            {
+                comservice.LogoutTimeTracker(userDetail.Id, Session.SessionID, 0);
+            }
+
+            HttpContext.Session["UserInfo"] = null;
+            Session.Clear();
+            Session.Abandon();
+
+            return Redirect(logOffReturnUrl);
+            //return RedirectToAction("Login", "Account");
+        }
+        [AllowAnonymous]
+        public ActionResult LogOffUserForceFully()
+        {
+            var logOffReturnUrl = LogOffUserReturnUrl();
+            HttpContext.GetOwinContext().Authentication.SignOut();
+            HttpContext.Cache.Remove(User.Identity.Name);
+            AuthenticationManager.SignOut(DefaultAuthenticationTypes.ApplicationCookie);
+            //CommomServices comservice = new CommomServices();
+            //UserInfo userDetail = (UserInfo)Session["UserInfo"];
+            //if (userDetail != null)
+            //{
+            //    comservice.LogoutTimeTracker(userDetail.Id, Session.SessionID, 0);
+            //}
+            //HttpContext.Session["UserInfo"] = null;
+            Session.Clear();
+            Session.Abandon();
+
+            return Redirect(logOffReturnUrl);
+            //return RedirectToAction("Login", "Account");
+        }
+
+        [HttpPost]
+        [AllowAnonymous]
+        public ActionResult LogOffUserDueToInactivity()
+        {
+            var logOffReturnUrl = LogOffUserReturnUrl();
+            HttpContext.GetOwinContext().Authentication.SignOut();
+            HttpContext.Cache.Remove(User.Identity.Name);
+            AuthenticationManager.SignOut(DefaultAuthenticationTypes.ApplicationCookie);
+            CommomServices comservice = new CommomServices();
+            UserInfo userDetail = (UserInfo)Session["UserInfo"];
+            if (userDetail != null)
+            {
+                comservice.LogoutTimeTracker(userDetail.Id, Session.SessionID, 1);
+            }
+            else
+            {
+                comservice.LogoutTimeTrackerWithSessionId(Session.SessionID, 1);
+            }
+
+            HttpContext.Session["UserInfo"] = null;
+            Session.Clear();
+            Session.Abandon();
+
+            return Redirect(logOffReturnUrl);
+            //return RedirectToAction("Login", "Account");
+        }
+
+        //[AllowAnonymous]
+        //public ActionResult TestLogin(string userId = "6f2847ee-45ce-4150-84a5-fb362b4c0a41")
+        //{   //ef5b166b-16ad-4967-85b7-956590835512 PAR  //ef5b166b-16ad-4967-85b7-956590835512
+        //    //d8a7f0ae-57a1-487f-bdf2-68aec0e4d2ee NEHA
+        //    SignInManager.SignIn(UserManager.FindById(userId), true, true);
+        //    ///d8a7f0ae-57a1-487f-bdf2-68aec0e4d2ee
+        //    return Content("LOGIN");
+        //}
+
+
+        UserInfo ActiveUser
+        {
+            get
+            {
+                return new UserInfo();
+            }
+        }
+        [HttpGet]
+        [CheckSessionOut]
+        public ActionResult SoftDeleteUser(int id, string search)
+        {
+            int HardDeleteUser = 0;
+
+            if (ActiveUser.Roles.Contains(UserRoles.ProvanaAdmin))
+            {
+                var res = 0;
+                res = new UserSetupServices().SoftDeleteUser(id);
+                if (res <= 0)
+                {
+                    TempData["nay"] = "Failed to delete user!";
+                    return PartialView("_RegisterationList", new UserSetupServices().GetFilteredUsers(search));
+                }
+
+                HardDeleteUser = 1;
+            }
+            else if (ActiveUser.Roles.Contains(UserRoles.ClientAdmin))
+            {
+                AnalystServices _as = new AnalystServices();
+                List<int> ClientIds = _as.GetAssignedClientIdList().ToList();
+                List<int> AssignedClientIds = _as.GetAssignedClientIdListById(id).ToList();
+
+                List<int> results = AssignedClientIds.Where(m => !ClientIds.Contains(m)).ToList();
+                if (results.Count > 0)
+                {
+                    //DELETE CLIENTADMIN ASSIGNED_DASHBOARDS
+                    using (CMDbContext _dbc = new CMDbContext())
+                    {
+                        List<AssignedDashBoard> data = (from ad in _dbc.AssignedDashBoards
+                                                        join cdb in _dbc.ClientDashBoards
+                                                        on ad.ClientDashBoardId equals cdb.Id
+                                                        where ad.UserDetailId == id && ClientIds.Contains(cdb.ClientId)
+                                                        select ad).ToList();
+
+                        _dbc.AssignedDashBoards.RemoveRange(data);
+                        _dbc.SaveChanges();
+                    }
+
+                    //DELETE CLIENTADMIN ASSIGNED_CLIENTS
+                    using (CMDbContext dbContext = new CMDbContext())
+                    {
+                        List<TblUserClient> deletedata = dbContext.TblUserClients.Where(x => x.UserDetailId == id && ClientIds.Contains(x.ClientId)).ToList();
+                        dbContext.TblUserClients.RemoveRange(deletedata);
+                        dbContext.SaveChanges();
+                    }
+
+                    //ClientHistorModify tbluserdetail client list
+                }
+                else if (results.Count == 0)
+                {
+                    ///delete user
+                    var res = 0;
+                    res = new UserSetupServices().SoftDeleteUser(id);
+                    if (res <= 0)
+                    {
+                        TempData["nay"] = "Failed to delete user!";
+                        return PartialView("_RegisterationList", new UserSetupServices().GetFilteredUsers(search));
+                    }
+
+                    HardDeleteUser = 1;
+                }
+            }
+
+            // permanent delete user  based on criteria & call deleteUser(string userid)
+
+            int Userdeleted = 0;
+            if (HardDeleteUser == 1)
+            {
+                string userid;
+                using (CMDbContext _dbc = new CMDbContext())
+                {
+                    userid = _dbc.TblUserDetails.Where(tbu => tbu.Id == id).Select(tbu => tbu.UserId).FirstOrDefault().ToString();
+                }
+                if (!String.IsNullOrEmpty(userid))
+                {
+                    Userdeleted = deleteUser(userid.Replace(Constants.ISDELETEDPHRASE, ""));
+                }
+                else
+                {
+                    TempData["nay"] = "Soft delete happened for user!";
+                    return PartialView("_RegisterationList", new UserSetupServices().GetFilteredUsers(search));
+                }
+            }
+            else
+            {
+                Userdeleted = 1;
+            }
+
+
+            if (Userdeleted == 1)
+            {
+                TempData["yay"] = "User deleted successfully!";
+                if (ActiveUser.Id == id)
+                {
+                    return RedirectToAction("LogOff", "Account");
+                }
+            }
+            else
+            {
+                TempData["nay"] = "Soft delete happened for user!";
+            }
+
+            //return RedirectToAction("List", "UserSetup");
+            return PartialView("_RegisterationList", new UserSetupServices().GetFilteredUsers(search));
+        }
+
+
+
+
+        [AllowAnonymous]
+        public ActionResult EncryptData(string txt)
+        {
+            return Content(Crypto.EncryptData(txt) + "<br/><br/><br/>For Test Only=== " + HttpUtility.UrlEncode(Crypto.EncryptData(txt)), "text/html");
+        }
+
+        [AllowAnonymous]
+        public ActionResult DecryptData(string txt)
+        {
+            return Content(Crypto.DecryptData(txt));
+        }
+
+    }
+}

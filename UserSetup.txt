@@ -1,0 +1,1451 @@
+using ICap.Domain;
+using ICap.Models;
+using ICap.ViewModels;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Data.SqlClient;
+using System.Configuration;
+using System.Data;
+using System.Web;
+using System.Text.RegularExpressions;
+using Newtonsoft.Json;
+using Microsoft.Ajax.Utilities;
+
+namespace ICap.BusinessLayer
+{
+    public class UserSetupServices
+    {
+        UserInfo ActiveUser
+        {
+            get
+            {
+                return new UserInfo();
+            }
+        }
+
+        public List<UserSetupVM> GetClientUsers(List<int> ClientIds)
+        {
+            List<UserSetupVM> userSetupVMs = new List<UserSetupVM>();
+            using (var _db = new CMDbContext())
+            {
+                var data = from ud in _db.TblUserDetails
+                           join anu in _db.AspNetUsers on ud.UserId equals anu.Id
+                           // where //ud.Id == id
+                           where ud.IsDeleted != 1
+                           orderby ud.Id
+                           select new UserSetupVM
+                           {
+                               Id = ud.Id,
+                               Name = ud.UserName,
+                               Image = ud.Image,
+                               UserType = ud.UserType,
+                               IsActive = ud.IsActive,
+
+                               Email = anu.Email,
+                               UserId = anu.Id,
+                               UserName = anu.UserName,
+                               Password = null,
+                               ConfirmPassword = null,
+                               IsUnredacted = ud.IsUnredacted,
+
+                               Roles = (from anur in _db.AspNetUserRoles
+                                        join anr in _db.AspNetRoles on anur.RoleId equals anr.Id
+                                        orderby anr.Name
+                                        where anur.UserId == anu.Id
+                                        select new AspNetRoleVM
+                                        {
+                                            Id = anr.Id,
+                                            Title = anr.Name
+                                        }).ToList(),
+
+                               Clients = (from uc in _db.TblUserClients
+                                          join c in _db.TblClients on uc.ClientId equals c.Id
+                                          orderby c.DisplayName
+                                          where uc.UserDetailId == ud.Id && ClientIds.Contains(c.Id)
+                                          select new TitleVM
+                                          {
+                                              Id = uc.ClientId,
+                                              Title = c.DisplayName
+                                          }).ToList(),
+
+                               PowerBIDasboards = (from ad in _db.AssignedDashBoards
+                                                   join cd in _db.ClientDashBoards on ad.ClientDashBoardId equals cd.Id
+                                                   join clnt in _db.TblClients on cd.ClientId equals clnt.Id
+
+                                                   orderby cd.BoardName
+                                                   where ad.UserDetailId == ud.Id && ClientIds.Contains(clnt.Id)
+                                                   select new TitleVM
+                                                   {
+                                                       Id = cd.Id,
+                                                       Title = clnt.ClientName + "-" + cd.BoardName
+                                                   }).ToList(),
+                           };
+                userSetupVMs = data.ToList();
+
+            }
+
+            //List<int> userids = (from User in userSetupVMs
+            //                     from Client in User.Clients
+            //                     where ClientIds.Contains(Client.Id) && User.UserType == UserTypes.External
+            //                     select User.Id).ToList();
+
+            List<UserSetupSidebarVM> users = GetUserSetupSidebar();
+            List<int> userids = new List<int>();
+
+            foreach (UserSetupSidebarVM user in users)
+            {
+                userids.Add(user.Id);
+            }
+
+            return userSetupVMs.Where(x => userids.Contains(x.Id)).ToList();
+        }
+        public List<UserSetupVM> GetAllUsers()
+        {
+            using (var _db = new CMDbContext())
+            {
+                var data = from ud in _db.TblUserDetails
+                           join anu in _db.AspNetUsers on ud.UserId equals anu.Id
+                           // where //ud.Id == id
+                           where ud.IsDeleted != 1
+                           orderby ud.Id
+                           select new UserSetupVM
+                           {
+                               Id = ud.Id,
+                               Name = ud.UserName,
+                               Image = ud.Image,
+                               UserType = ud.UserType,
+                               IsActive = ud.IsActive,
+
+                               Email = anu.Email,
+                               UserId = anu.Id,
+                               UserName = anu.UserName,
+                               Password = null,
+                               ConfirmPassword = null,
+                               IsUnredacted = ud.IsUnredacted,
+
+                               Roles = (from anur in _db.AspNetUserRoles
+                                        join anr in _db.AspNetRoles on anur.RoleId equals anr.Id
+                                        orderby anr.Name
+                                        where anur.UserId == anu.Id
+                                        select new AspNetRoleVM
+                                        {
+                                            Id = anr.Id,
+                                            Title = anr.Name
+                                        }).ToList(),
+
+                               Clients = (from uc in _db.TblUserClients
+                                          join c in _db.TblClients on uc.ClientId equals c.Id
+                                          orderby c.DisplayName
+                                          where uc.UserDetailId == ud.Id
+                                          select new TitleVM
+                                          {
+                                              Id = uc.ClientId,
+                                              Title = c.DisplayName
+                                          }).ToList(),
+
+                               PowerBIDasboards = (from ad in _db.AssignedDashBoards
+                                                   join cd in _db.ClientDashBoards on ad.ClientDashBoardId equals cd.Id
+                                                   join clnt in _db.TblClients on cd.ClientId equals clnt.Id
+
+                                                   orderby cd.BoardName
+                                                   where ad.UserDetailId == ud.Id
+                                                   select new TitleVM
+                                                   {
+                                                       Id = cd.Id,
+                                                       Title = clnt.ClientName + "-" + cd.BoardName
+                                                   }).ToList(),
+                           };
+                return data.ToList();
+            }
+        }
+
+        public List<UserSetupVM> GetUsersByRole()
+        {
+            List<UserSetupVM> RoleUserList = new List<UserSetupVM>();
+            if (ActiveUser.Roles.Contains(UserRoles.ProvanaAdmin))
+            {
+                RoleUserList = GetAllUsers();
+            }
+            else if (ActiveUser.Roles.Contains(UserRoles.ClientAdmin))
+            {
+                List<int> ClientIds = new AnalystServices().GetAssignedClientIdList().ToList();
+                RoleUserList = GetClientUsers(ClientIds);
+            }
+            return RoleUserList;
+        }
+
+        public List<UserSetupSidebarVM> GetUserSetupSidebar()
+        {
+            using (var _db = new CMDbContext())
+            {
+                List<UserSetupSidebarVM> returndata = new List<UserSetupSidebarVM>();
+                if (ActiveUser.Roles.Contains(UserRoles.ProvanaAdmin))
+                {
+                    var data = from c in _db.TblUserDetails
+                               where c.IsDeleted != 1 && c.UserName != null
+                               orderby c.UserName
+                               select new UserSetupSidebarVM
+                               {
+                                   Id = c.Id,
+                                   Name = c.UserName,
+                                   IsActive = c.IsActive
+                               };
+                    returndata = data.ToList();
+
+                }
+                else if (ActiveUser.Roles.Contains(UserRoles.ClientAdmin))
+                {
+
+                    var _service = new AnalystServices();
+                    List<int> clientIdList = _service.GetAssignedClientIdList().ToList();
+
+                    List<UserSetupSidebarVM> UserList = new List<UserSetupSidebarVM>();
+
+                    foreach (int ClientId in clientIdList)
+                    {
+                        var Users = _db.GetClientAdminUsers(ActiveUser.Id, ClientId);
+
+                        foreach (GetClientAdminUsersReturnModel user in Users)
+                        {
+                            UserList.Add(new UserSetupSidebarVM
+                            {
+                                Id = user.id,
+                                Name = user.UserName,
+                                IsActive = user.IsActive
+                            });
+                        }
+                    }
+
+                    returndata = UserList.DistinctBy(user=>user.Id).ToList();
+                }
+
+                return returndata;
+
+            }
+        }
+
+        public List<TblClientModel> GetClientList()
+        {
+            int[] clientIdList = new int[] { };
+
+            if (ActiveUser.UserType.ToUpper() == "EXTERNAL")
+            {
+                var _service = new AnalystServices();
+                clientIdList = _service.GetAssignedClientIdList();
+            }
+
+            using (var _db = new CMDbContext())
+            {
+                var list = from x in _db.TblClients
+                           where x.DisplayName != null && !x.IsDeleted
+                           && ((ActiveUser.UserType.ToUpper() == "INTERNAL") || (ActiveUser.UserType.ToUpper() == "EXTERNAL" && clientIdList.Contains(x.Id)))
+                           select new TblClientModel
+                           {
+
+                               Id = x.Id,
+                               ClientName = x.ClientName,
+                               DisplayName = (string.IsNullOrEmpty(x.DisplayName) ? x.ClientName : x.DisplayName)
+
+                           };
+                return list.OrderBy(x => x.DisplayName).ToList();
+            }
+        }
+
+        public UserSetupVM GetById(int id)
+        {
+            //we don't need to filter the dashboards here as when client won't show, the related dashboards won't show either
+            // in case it is required to be removed, savedata() function in usersetupservices needed to be modified accordingly to not affect
+            //non-selected data in case of client admin configure a user who has other clients as well assigned to it
+
+            List<int> clientIdList = new List<int>();
+            if (ActiveUser.Roles.Contains(UserRoles.ClientAdmin) && !ActiveUser.Roles.Contains(UserRoles.Admin))
+            {
+                var _service = new AnalystServices();
+                clientIdList = _service.GetAssignedClientIdList().ToList();
+            }
+
+            using (var _db = new CMDbContext())
+            {
+                var data = from ud in _db.TblUserDetails
+                           join anu in _db.AspNetUsers on ud.UserId equals anu.Id
+                           where ud.Id == id
+                           select new UserSetupVM
+                           {
+                               Id = ud.Id,
+                               Name = ud.UserName,
+                               UserType = ud.UserType,
+                               IsActive = ud.IsActive,
+
+                               Email = anu.Email,
+                               UserId = anu.Id,
+                               UserName = anu.UserName,
+                               Password = null,
+                               ConfirmPassword = null,
+                               IsUnredacted = ud.IsUnredacted,
+                               DesignationId = ud.DesignationId,
+
+                               Roles = (from anur in _db.AspNetUserRoles
+                                        join anr in _db.AspNetRoles on anur.RoleId equals anr.Id
+                                        orderby anr.Name
+                                        where anur.UserId == anu.Id
+                                        select new AspNetRoleVM
+                                        {
+                                            Id = anr.Id,
+                                            Title = anr.Name,
+                                            PageNames = "",
+                                            MetaData = "",
+                                            ReviewedBy = ""
+                                        }).ToList(),
+
+                               Clients = (from uc in _db.TblUserClients
+                                          join c in _db.TblClients on uc.ClientId equals c.Id
+                                          orderby c.DisplayName
+                                          where uc.UserDetailId == ud.Id && (clientIdList.Count == 0 || clientIdList.Contains(uc.ClientId))
+                                          select new TitleVM
+                                          {
+                                              Id = uc.ClientId,
+                                              Title = c.DisplayName,
+                                              PageNames = "",
+                                              MetaData = "",
+                                              ReviewedBy = ""
+                                          }).ToList(),
+
+                               PowerBIDasboards = (from ad in _db.AssignedDashBoards
+                                                   join cd in _db.ClientDashBoards on ad.ClientDashBoardId equals cd.Id
+                                                   orderby cd.BoardName
+                                                   where ad.UserDetailId == ud.Id
+                                                   select new TitleVM
+                                                   {
+                                                       Id = cd.Id,
+                                                       Title = cd.BoardName,
+                                                       PageNames = ad.Pages,
+                                                       MetaData = ad.MetaData,
+                                                       ReviewedBy = ad.ReviewedBy
+                                                   }).ToList(),
+
+                           };
+                return data.FirstOrDefault();
+            }
+        }
+
+
+
+        public int SaveData(UserSetupVM objVM)
+        {
+            var _db = new CMDbContext();
+            TblUserDetail obj = null;
+            if (objVM.Id > 0)
+            {
+                obj = _db.TblUserDetails.FirstOrDefault(x => x.Id == objVM.Id);
+            }
+            if (obj == null)
+            {
+                obj = new TblUserDetail();
+                obj.IsActive = true;
+            }
+
+            obj.UserName = objVM.Name;
+            obj.UserId = objVM.UserId;
+            obj.UserType = objVM.UserType;
+            obj.IsUnredacted = objVM.IsUnredacted;
+            obj.DesignationId = objVM.DesignationId;
+            if (objVM.Clients != null && objVM.Clients.Count > 0)
+            {
+                obj.AssignedClients = string.Join(",", objVM.Clients.Select(x => x.Id.ToString()));
+            }
+
+            if (obj.Id > 0)
+            {
+                _db.TblUserDetails.Attach(obj);
+                _db.Entry(obj).State = System.Data.Entity.EntityState.Modified;
+            }
+            else
+            {
+                _db.TblUserDetails.Add(obj);
+            }
+
+            if (_db.SaveChanges() <= 0)
+            {
+                return 0;
+            }
+
+            #region Userclients
+            var userClients = _db.TblUserClients.Where(x => x.UserDetailId == obj.Id).ToList();
+
+            var alreadyExist = (from uc in userClients
+                                join o_uc in objVM.Clients on uc.ClientId equals o_uc.Id
+                                where uc.UserDetailId == obj.Id
+                                select uc).ToList();
+
+            List<TblUserClient> removeItems = userClients.Except(alreadyExist).ToList();
+
+            if (ActiveUser.Roles.Contains(UserRoles.ClientAdmin) && !ActiveUser.Roles.Contains(UserRoles.Admin))
+            {
+                var _service = new AnalystServices();
+                int[] clientIdList = _service.GetAssignedClientIdList();
+                removeItems = removeItems.Where(r => clientIdList.Contains(r.ClientId)).ToList();
+            }
+
+            foreach (var item in removeItems)
+            {
+                _db.TblUserClients.Remove(item);
+                _db.Entry(item).State = System.Data.Entity.EntityState.Deleted;
+            }
+            #endregion
+
+            foreach (var item in objVM.Clients)
+            {
+                var _userClient = userClients.FirstOrDefault(x => x.ClientId == item.Id);
+                if (_userClient == null)
+                {
+                    _userClient = new TblUserClient();
+                }
+
+                _userClient.UserDetailId = obj.Id;
+                _userClient.ClientId = item.Id;
+
+                if (_userClient.Id > 0)
+                {
+                    _db.TblUserClients.Attach(_userClient);
+                    _db.Entry(_userClient).State = System.Data.Entity.EntityState.Modified;
+                }
+                else
+                {
+                    _db.TblUserClients.Add(_userClient);
+                }
+
+
+            }
+
+
+
+            #region DASHBOARDS
+
+            List<AssignedDashBoard> assignedDashBoards = new List<AssignedDashBoard>();
+
+            if (ActiveUser.Roles.Contains(UserRoles.ClientAdmin))
+            {
+
+                List<int> clientIdList = new AnalystServices().GetAssignedClientIdList().ToList();
+
+                assignedDashBoards = (from uc in _db.AssignedDashBoards
+                                      join cdb in _db.ClientDashBoards
+                                      on uc.ClientDashBoardId equals cdb.Id
+                                      where uc.UserDetailId == obj.Id && clientIdList.Contains(cdb.ClientId)
+                                      select uc).ToList();
+            }
+            else if (ActiveUser.Roles.Contains(UserRoles.ProvanaAdmin))
+            {
+                assignedDashBoards = (from uc in _db.AssignedDashBoards
+                                      where uc.UserDetailId == obj.Id
+                                      select uc).ToList();
+            }
+
+            foreach (var item in assignedDashBoards)
+            {
+                _db.AssignedDashBoards.Remove(item);
+                _db.Entry(item).State = System.Data.Entity.EntityState.Deleted;
+            }
+
+
+            foreach (var item in objVM.PowerBIDasboards)
+            {
+                if (objVM.IsDashAssigned == 0)
+                {
+                    var _AssignedDashBoard = _db.AssignedDashBoards.Where(x => x.UserDetailId == obj.Id).Where(x => x.ClientDashBoardId == item.Id).FirstOrDefault();
+                    if (_AssignedDashBoard != null)
+                    {
+                        _db.AssignedDashBoards.Remove(_AssignedDashBoard);
+                        _db.Entry(_AssignedDashBoard).State = System.Data.Entity.EntityState.Deleted;
+                    }
+
+
+                    #region ClientAccessFilter                
+                    var _clientAccessFilter = _db.ClientAccessFilters.Where(x => x.ClientId == item.ClientID).Where(x => x.UserId == obj.Id).FirstOrDefault();
+                    if (_clientAccessFilter == null)
+                    {
+                        if (item.AddAccessData != null)
+                        {
+                            if (item.AddAccessData != null)
+                            {
+                                var results1 = JsonConvert.DeserializeObject<List<AccessData>>(item.AddAccessData);
+                                foreach (var datas in results1)
+                                {
+                                    _clientAccessFilter = new ClientAccessFilter();
+                                    _clientAccessFilter.UserId = obj.Id;
+                                    _clientAccessFilter.ClientId = item.ClientID;
+
+                                    _clientAccessFilter.Metadata = datas.Name;
+                                    if (datas.Value != "")
+                                    {
+                                        if (datas.Name == "6")
+                                        {
+                                            _clientAccessFilter.MetaValues = datas.Value;
+                                        }
+                                        else
+                                        {
+                                            //_clientAccessFilter.MetaValues = "\"" + datas.Value.Replace("\"", "").Replace(",", "\",\"") + "\"";
+                                            _clientAccessFilter.MetaValues = datas.Value;
+                                        }
+                                        _clientAccessFilter.MetadataAaf = item.MetaDataAAF;
+                                        _clientAccessFilter.AssignedByRole = datas.AssignedByRole;
+                                        _db.ClientAccessFilters.Add(_clientAccessFilter);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    else
+                    {
+                        var _clientAccessFilter1 = _db.ClientAccessFilters.Where(x => x.ClientId == item.ClientID).Where(x => x.UserId == obj.Id).Select(x => new { x.UserId, x.ClientId, x.Metadata, x.MetaValues }).ToList();
+                        if (item.AddAccessData != null)
+                        {
+                            var results2 = JsonConvert.DeserializeObject<List<AccessData>>(item.AddAccessData);
+                            List<string> metaProps = new List<string>();
+                            List<ClientAccessFilter> _clientAccessFilter2 = _db.ClientAccessFilters.Where(x => x.UserId == obj.Id).ToList();
+                            foreach (var ri in _clientAccessFilter2)
+                            {
+                                _db.ClientAccessFilters.Remove(ri);
+                                _db.Entry(ri).State = System.Data.Entity.EntityState.Deleted;
+                            }
+
+                            var _clientAccessFilterAgain = new ClientAccessFilter();
+                            var results1 = JsonConvert.DeserializeObject<List<AccessData>>(item.AddAccessData);
+                            foreach (var datas in results1)
+                            {
+                                _clientAccessFilterAgain = new ClientAccessFilter();
+                                _clientAccessFilterAgain.UserId = obj.Id;
+                                _clientAccessFilterAgain.ClientId = item.ClientID;
+
+                                _clientAccessFilterAgain.Metadata = datas.Name;
+                                if (datas.Value != "")
+                                {
+                                    if (datas.Name == "6")
+                                    {
+                                        _clientAccessFilterAgain.MetaValues = datas.Value;
+                                    }
+                                    else
+                                    {
+                                        //_clientAccessFilterAgain.MetaValues = "\"" + datas.Value.Replace("\"", "").Replace(",", "\",\"") + "\"";
+                                        _clientAccessFilterAgain.MetaValues = datas.Value;
+                                    }
+                                    _clientAccessFilterAgain.MetadataAaf = item.MetaDataAAF;
+                                    //_clientAccessFilterAgain.AssignedByRole = objVM.AssignedByUserId;
+                                    foreach (var datas2 in _clientAccessFilter2.Where(x => x.Metadata == datas.Name))
+                                    {
+                                        if (ActiveUser.Roles.Contains(UserRoles.ProvanaAdmin))
+                                            _clientAccessFilterAgain.AssignedByRole = objVM.AssignedByUserId;
+                                        else if (datas2.AssignedByRole > 0)
+                                            _clientAccessFilterAgain.AssignedByRole = datas2.AssignedByRole;
+                                        else
+                                            _clientAccessFilterAgain.AssignedByRole = objVM.AssignedByUserId;
+                                    }
+                                    if (_clientAccessFilterAgain.AssignedByRole == null)
+                                    {
+                                        _clientAccessFilterAgain.AssignedByRole = objVM.AssignedByUserId;
+                                    }
+                                    _db.ClientAccessFilters.Add(_clientAccessFilterAgain);
+                                }
+                            }
+                        }
+                    }
+                    #endregion
+                }
+                else
+                {
+                    var _AssignedDashBoard = new AssignedDashBoard();
+                    _AssignedDashBoard.UserDetailId = obj.Id;
+                    _AssignedDashBoard.ClientDashBoardId = item.Id;
+                    _AssignedDashBoard.Pages = item.PageNames;
+                    _AssignedDashBoard.MetaData = item.MetaData;
+                    _AssignedDashBoard.ReviewedBy = item.ReviewedBy;
+                    _db.AssignedDashBoards.Add(_AssignedDashBoard);
+
+                    #region ClientAccessFilter                
+                    var _clientAccessFilter = _db.ClientAccessFilters.Where(x => x.ClientId == item.ClientID).Where(x => x.UserId == obj.Id).FirstOrDefault();
+                    if (_clientAccessFilter == null)
+                    {
+                        if (item.AddAccessData != null)
+                        {
+                            var results1 = JsonConvert.DeserializeObject<List<AccessData>>(item.AddAccessData);
+                            foreach (var datas in results1)
+                            {
+                                _clientAccessFilter = new ClientAccessFilter();
+                                _clientAccessFilter.UserId = obj.Id;
+                                _clientAccessFilter.ClientId = item.ClientID;
+
+                                _clientAccessFilter.Metadata = datas.Name;
+                                if (datas.Value != "")
+                                {
+                                    if (datas.Name == "6")
+                                    {
+                                        _clientAccessFilter.MetaValues = datas.Value;
+                                    }
+                                    else
+                                    {
+                                        //_clientAccessFilter.MetaValues = "\"" + datas.Value.Replace("\"", "").Replace(",", "\",\"") + "\"";
+                                        _clientAccessFilter.MetaValues = datas.Value;
+                                    }
+
+
+                                    _clientAccessFilter.MetadataAaf = item.MetaDataAAF;
+
+                                    _clientAccessFilter.AssignedByRole = datas.AssignedByRole;
+                                    //_clientAccessFilter.AssignedByRole = (objVM.AssignedBySelf == 1) ? 2 : (ActiveUser.Roles.Contains(UserRoles.ProvanaAdmin)) ? 1 : 0;
+                                    //_clientAccessFilter.AssignedByParentOrSelf = (objVM.AssignedBySelf == 1) ? 2 : (ActiveUser.Roles.Contains(UserRoles.ProvanaAdmin)) ? 1 : 0;
+
+                                    _db.ClientAccessFilters.Add(_clientAccessFilter);
+                                }
+                            }
+                        }
+                    }
+                    else
+                    {
+                        var _clientAccessFilter1 = _db.ClientAccessFilters.Where(x => x.ClientId == item.ClientID).Where(x => x.UserId == obj.Id).Select(x => new { x.UserId, x.ClientId, x.Metadata, x.MetaValues }).ToList();
+                        if (item.AddAccessData != null)
+                        {
+                            var results2 = JsonConvert.DeserializeObject<List<AccessData>>(item.AddAccessData);
+                            List<string> metaProps = new List<string>();
+                            List<ClientAccessFilter> _clientAccessFilter2 = _db.ClientAccessFilters.Where(x => x.UserId == obj.Id).ToList();
+                            foreach (var ri in _clientAccessFilter2)
+                            {
+                                _db.ClientAccessFilters.Remove(ri);
+                                _db.Entry(ri).State = System.Data.Entity.EntityState.Deleted;
+                            }
+
+                            var _clientAccessFilterAgain = new ClientAccessFilter();
+                            var results1 = JsonConvert.DeserializeObject<List<AccessData>>(item.AddAccessData);
+                            foreach (var datas in results1)
+                            {
+                                _clientAccessFilterAgain = new ClientAccessFilter();
+                                _clientAccessFilterAgain.UserId = obj.Id;
+                                _clientAccessFilterAgain.ClientId = item.ClientID;
+
+                                _clientAccessFilterAgain.Metadata = datas.Name;
+                                if (datas.Value != "")
+                                {
+                                    if (datas.Name == "6")
+                                    {
+                                        _clientAccessFilterAgain.MetaValues = datas.Value;
+                                    }
+                                    else
+                                    {
+                                        //_clientAccessFilterAgain.MetaValues = "\"" + datas.Value.Replace("\"", "").Replace(",", "\",\"") + "\"";
+                                        _clientAccessFilterAgain.MetaValues = datas.Value;
+                                    }
+
+
+                                    _clientAccessFilterAgain.MetadataAaf = item.MetaDataAAF;
+
+                                    //_clientAccessFilterAgain.AssignedByRole = objVM.AssignedByUserId;
+
+                                    foreach (var datas2 in _clientAccessFilter2.Where(x => x.Metadata == datas.Name))
+                                    {
+                                        if (ActiveUser.Roles.Contains(UserRoles.ProvanaAdmin))
+                                            _clientAccessFilterAgain.AssignedByRole = objVM.AssignedByUserId;
+                                        else if (datas2.AssignedByRole > 0)
+                                            _clientAccessFilterAgain.AssignedByRole = datas2.AssignedByRole;
+                                        else
+                                            _clientAccessFilterAgain.AssignedByRole = objVM.AssignedByUserId;
+                                    }
+
+                                    if (_clientAccessFilterAgain.AssignedByRole == null)
+                                    {
+                                        _clientAccessFilterAgain.AssignedByRole = objVM.AssignedByUserId;
+                                    }
+
+                                    _db.ClientAccessFilters.Add(_clientAccessFilterAgain);
+                                }
+                            }
+                        }                        
+                    }
+                    #endregion
+                }
+            }
+            if (objVM.assignedSources == null)
+                objVM.assignedSources = "0";
+            #endregion
+            if (objVM.Id != 0 && objVM.assignedSources!=null && ActiveUser.Roles.Contains(UserRoles.ProvanaAdmin))
+                SaveSources(objVM.Id, objVM.assignedSources);
+
+            if (_db.SaveChanges() > 0)
+            {
+                if (objVM.Id == 0)
+                {
+                    if(objVM.assignedSources!=null)
+                    SaveSources(obj.Id, objVM.assignedSources);
+                }
+                return obj.Id;
+            }
+            else
+            {
+                return 0;
+            }
+        }
+
+        public int SaveSources(int UserId, string SourceIds)
+        {
+
+            int result = 0;
+            using (CMDbContext entity = new CMDbContext())
+            {
+                //data = entity.TblComments.Where(x => x.Id == Id && x.ScoreComponentId == ComponentId).FirstOrDefault();               
+                result = entity.UpdateSourcesToClient(UserId,SourceIds);
+            }
+            return result;
+        }
+
+        public List<TitleVM> GetClientDashboards(int[] clientIds)
+        {
+            using (var _db = new CMDbContext())
+            {
+                var data = from cd in _db.ClientDashBoards
+                           join id in clientIds on cd.ClientId equals id
+                           join tc in _db.TblClients on cd.ClientId equals tc.Id
+                           where cd.IsActive == true
+                           orderby cd.BoardName
+                           select new TitleVM
+                           {
+                               Id = cd.Id,
+                               Title = cd.BoardName,
+                               DashURL = cd.DashboardUrl,
+                               ReportID = cd.ReportId,
+                               ClientName = tc.DisplayName,
+                               ClientID = cd.ClientId,
+                               ClientCallModName = tc.ClientName
+                           };
+                return data.ToList();
+            }
+        }
+        public List<TitleVM> GetAssignedClientDashboardsWithURL(int[] clientIds)
+        {
+            List<int> AssignedClientIds = new AnalystServices().GetAssignedClientIdList().ToList();
+
+            using (var _db = new CMDbContext())
+            {
+                //var data = from cd in _db.ClientDashBoards
+                //           join tc in _db.TblClients on cd.ClientId equals tc.Id
+                //           where cd.IsActive == true && cd.ClientId == clientIds &&
+                //           ((AssignedClientIds.Contains(tc.Id) && ActiveUser.Roles.Contains(UserRoles.ClientAdmin)) ||
+                //           (ActiveUser.Roles.Contains(UserRoles.ProvanaAdmin)))
+                //           orderby tc.ClientName
+                //           select new TitleVM
+                //           {
+                //               Id = cd.Id,
+                //               Title = cd.BoardName,
+                //               DashURL = cd.DashboardUrl,
+                //               ReportID = cd.ReportId,
+                //               ClientName = tc.DisplayName,
+                //               ClientID = cd.ClientId,
+                //               ClientCallModName = tc.ClientName
+                //           };
+                var data = from cd in _db.ClientDashBoards
+                           join id in clientIds on cd.ClientId equals id
+                           join tc in _db.TblClients on cd.ClientId equals tc.Id
+                           where cd.IsActive == true &&
+                           ((AssignedClientIds.Contains(tc.Id) && ActiveUser.Roles.Contains(UserRoles.ClientAdmin)) ||
+                           (ActiveUser.Roles.Contains(UserRoles.ProvanaAdmin)))
+                           orderby tc.DisplayName
+                           select new TitleVM
+                           {
+                               Id = cd.Id,
+                               Title = cd.BoardName,
+                               DashURL = cd.DashboardUrl,
+                               ReportID = cd.ReportId,
+                               ClientName = tc.DisplayName,
+                               ClientID = cd.ClientId,
+                               ClientCallModName = tc.ClientName
+                           };
+                return data.ToList();
+            }
+        }
+        public List<TitleVMMetaData> GetClientDashboardsMetadata(int[] clientIds)
+        {
+            using (var _db = new CMDbContext())
+            {
+                var data = (from cd in _db.ClientDashBoards
+                            join tbc in _db.TblClients on cd.ClientId equals tbc.Id
+                            join am in _db.AssignedMetaDatas on cd.ClientId equals am.ClientId
+                            join mdm in _db.MetadataMasters on am.MasterMetadataId equals mdm.Id
+                            join id in clientIds on cd.ClientId equals id
+                            where cd.IsActive == true && mdm.NameAsInView != null
+                            select new TitleVMMetaData
+                            {
+                                Id = cd.ClientId,
+                                ClientName = tbc.ClientName,
+                                DashboardId = cd.Id,
+                                MasterMetadataId = am.MasterMetadataId,
+                                FriendlyName = am.FriendlyName,
+                                MetadataColumnName = mdm.MetadataColumnName
+                            }).Distinct();
+                return data.ToList();
+            }
+        }
+        public List<TitleVMMetaData> GetClientDashboardsMetadataNormal(int[] clientIds, int dashboardid)
+        {
+            using (var _db = new CMDbContext())
+            {
+                var data = (from cd in _db.ClientDashBoards
+                            join tbc in _db.TblClients on cd.ClientId equals tbc.Id
+                            join am in _db.AssignedMetaDatas on cd.ClientId equals am.ClientId
+                            join mdm in _db.MetadataMasters on am.MasterMetadataId equals mdm.Id
+                            join id in clientIds on cd.ClientId equals id
+                            where cd.IsActive == true && mdm.NameAsInView != null && cd.Id == dashboardid
+                            select new TitleVMMetaData
+                            {
+                                Id = cd.ClientId,
+                                ClientName = tbc.ClientName,
+                                DashboardId = cd.Id,
+                                MasterMetadataId = am.MasterMetadataId,
+                                FriendlyName = am.FriendlyName,
+                                MetadataColumnName = mdm.MetadataColumnName
+                            }).Distinct();
+                return data.ToList();
+            }
+        }
+        public List<TitleVMMetaData> GetClientDashboardsMetadataNormalALL(int[] clientIds, int dashboardid)
+        {
+            using (var _db = new CMDbContext())
+            {
+                var data = (from cd in _db.ClientDashBoards
+                            join tbc in _db.TblClients on cd.ClientId equals tbc.Id
+                            join am in _db.AssignedMetaDatas on cd.ClientId equals am.ClientId
+                            join mdm in _db.MetadataMasters on am.MasterMetadataId equals mdm.Id
+                            join id in clientIds on cd.ClientId equals id
+                            where cd.IsActive == true && mdm.NameAsInView != null
+                            select new TitleVMMetaData
+                            {
+                                Id = cd.ClientId,
+                                ClientName = tbc.ClientName,
+                                DashboardId = cd.Id,
+                                MasterMetadataId = am.MasterMetadataId,
+                                FriendlyName = am.FriendlyName,
+                                MetadataColumnName = mdm.MetadataColumnName
+                            }).Distinct();
+                return data.ToList();
+            }
+        }
+        public List<TitleVMMetaData> GetClientsMeta(int clientId)
+        {
+            using (var _db = new CMDbContext())
+            {
+                var data = (from am in _db.AssignedMetaDatas
+                            join mm in _db.MetadataMasters on am.MasterMetadataId equals mm.Id
+                            join tc in _db.TblClients on am.ClientId equals tc.Id
+                            //join id in clientIds on am.ClientId equals id
+                            where mm.NameAsInView != null && am.ClientId == clientId
+                            select new TitleVMMetaData
+                            {
+                                Id = am.ClientId,
+                                ClientName = tc.ClientName,
+                                MasterMetadataId = am.MasterMetadataId,
+                                FriendlyName = am.FriendlyName,
+                                MetadataColumnName = mm.MetadataColumnName
+                            }).Distinct();
+                return data.ToList();
+            }
+        }
+        public List<TitleVMMetaData> GetClientIDByBoardName(string boardName)
+        {
+            using (var _db = new CMDbContext())
+            {
+                var data = (from am in _db.ClientDashBoards
+                            where am.BoardName == boardName
+                            select new TitleVMMetaData
+                            {
+                                Id = am.ClientId
+                            }).Distinct();
+                return data.ToList();
+            }
+        }
+        public List<TitleVMMetaData> GetMDIDByClientName(int clientID)
+        {
+            using (var _db = new CMDbContext())
+            {
+                var data = (from am in _db.AssignedMetaDatas
+                            where am.ClientId == clientID
+                            select new TitleVMMetaData
+                            {
+                                Id = am.MasterMetadataId,
+                                FriendlyName = am.FriendlyName
+                            }).Distinct();
+                return data.ToList();
+            }
+        }
+        public List<TitleVMMetaData> MetadataMaster()
+        {
+            using (var _db = new CMDbContext())
+            {
+                var data = (from am in _db.MetadataMasters
+                            select new TitleVMMetaData
+                            {
+                                Id = am.Id,
+                                //MetadataColumnName = am.MetadataColumnName
+                                NameAsInView = am.NameAsInView
+                            }).Distinct();
+                return data.ToList();
+            }
+        }
+        public List<TitleVM> GetReviewedBy(int? reportId, int userdetailid)
+        {
+            using (var _db = new CMDbContext())
+            {
+                var data = (from ad in _db.AssignedDashBoards
+                            where ad.ClientDashBoardId == reportId && ad.UserDetailId == userdetailid
+                            select new TitleVM
+                            {
+                                ReviewedBy = ad.ReviewedBy
+                            }).Distinct();
+                return data.ToList();
+            }
+        }
+        public List<TitleVMMetaData> GetAgentsMetadata(int[] clientIds, int dashboardid)
+        {
+            using (var _db = new CMDbContext())
+            {
+                var data = (from tc in _db.TblClients
+                            join cd in _db.ClientDashBoards on tc.Id equals cd.ClientId
+                            join ag in _db.Agents on tc.ClientName equals ag.ClientCategory
+                            join am in _db.AssignedMetaDatas on cd.ClientId equals am.ClientId
+                            join id in clientIds on cd.ClientId equals id
+                            where cd.IsActive == true && cd.Id == dashboardid
+                            orderby ag.DisplayName
+                            select new TitleVMMetaData
+                            {
+                                Id = cd.ClientId,
+                                DashboardId = cd.Id,
+                                AgentName = ag.DisplayName
+                            }).Distinct();
+                return data.ToList();
+            }
+        }
+        public List<TitleVMMetaData> GetAgentsMetadataAAF(int[] clientIds)
+        {
+            using (var _db = new CMDbContext())
+            {
+                var data = (from tc in _db.TblClients
+                            join cd in _db.ClientDashBoards on tc.Id equals cd.ClientId
+                            join ag in _db.Agents on tc.ClientName equals ag.ClientCategory
+                            join am in _db.AssignedMetaDatas on cd.ClientId equals am.ClientId
+                            join id in clientIds on cd.ClientId equals id
+                            where cd.IsActive == true
+                            orderby ag.DisplayName
+                            select new TitleVMMetaData
+                            {
+                                Id = cd.ClientId,
+                                //Id = ag.AgentId,
+                                DashboardId = cd.Id,
+                                AgentName = ag.DisplayName
+                            }).Distinct();
+                return data.ToList();
+            }
+        }
+        public List<Agent> GetAgentList(int ClientID, string agency)
+        {
+            using (CMDbContext entity = new CMDbContext())
+            {
+                List<Agent> data = entity.GetClientAgents(null, ClientID, agency)
+               .Select(x => new Agent()
+               {
+                   AgentId = (int)x.AgentID,
+                   Agent_ = x.Agent,
+                   ClientCategory = x.Client_Category,
+                   DisplayName = x.DisplayName,
+                   IsActive = x.ISActive
+               })
+               .ToList();
+                return data;
+            }
+        }
+        public List<TitleVM> GetRLSData(int id)
+        {
+            using (var _db = new CMDbContext())
+            {
+                var data = (from ud in _db.TblUserDetails
+                            join ad in _db.AssignedDashBoards on ud.Id equals ad.UserDetailId
+                            join cd in _db.ClientDashBoards on ad.ClientDashBoardId equals cd.Id
+                            where ad.UserDetailId == id
+                            select new TitleVM
+                            {
+                                Id = cd.Id,
+                                Title = cd.BoardName,
+                                PageNames = ad.Pages,
+                                MetaData = ad.MetaData,
+                                ClientID = cd.ClientId,
+                                ReviewedBy = ad.ReviewedBy
+                            }).Distinct();
+                return data.ToList();
+            }
+        }
+        public int ActivateDeActivateUser(int id, bool isActive, out string userId)
+        {
+            userId = null;
+            var _db = new CMDbContext();
+            var obj = _db.TblUserDetails.FirstOrDefault(x => x.Id == id);
+            if (obj == null)
+            {
+                return 0;
+            }
+            userId = obj.UserId;
+            obj.IsActive = isActive;
+
+            _db.TblUserDetails.Attach(obj);
+            _db.Entry(obj).State = System.Data.Entity.EntityState.Modified;
+
+            if (_db.SaveChanges() > 0)
+            {
+                return obj.Id;
+            }
+            else
+            {
+                return 0;
+            }
+        }
+
+        public int SoftDeleteUser(int id)
+        {
+            var _db = new CMDbContext();
+            var obj = _db.TblUserDetails.FirstOrDefault(x => x.Id == id);
+            if (obj == null)
+            {
+                return 0;
+            }
+            obj.IsDeleted = 1;
+            obj.UserId = obj.UserId + Constants.ISDELETEDPHRASE;
+
+            _db.TblUserDetails.Attach(obj);
+            _db.Entry(obj).State = System.Data.Entity.EntityState.Modified;
+
+            if (_db.SaveChanges() > 0)
+            {
+                return obj.Id;
+            }
+            else
+            {
+                return 0;
+            }
+        }
+
+        public bool IsEmailAlreadyExist(string emailId, string userIdNoEqual)
+        {
+            using (var _db = new CMDbContext())
+            {
+                if (string.IsNullOrEmpty(userIdNoEqual))
+                {
+                    return _db.AspNetUsers.Any(x => x.Email == emailId);
+                }
+                else
+                {
+                    return _db.AspNetUsers.Any(x => x.Email == emailId && x.Id != userIdNoEqual);
+                }
+
+            }
+        }
+
+        public TblUserDetail GetUserDetailByUserId(string userId)
+        {
+            using (var _db = new CMDbContext())
+            {
+                return _db.TblUserDetails.FirstOrDefault(x => x.UserId == userId);
+            }
+        }
+        public TblUserDetail GetUserDetailById(int id)
+        {
+            using (var _db = new CMDbContext())
+            {
+                return _db.TblUserDetails.FirstOrDefault(x => x.Id == id);
+            }
+        }
+
+        public List<NotificationsModel> GetUSerAudioRequests(int userId)
+        {
+            //delete cancelled jobs
+            using (var db = new CMDbContext())
+            {
+                db.Database.CommandTimeout = 600; //in Seconds --> setting to 10 minutes.
+
+                db.Database.ExecuteSqlCommand("DELETE FROM AudioCallsList WHERE JobId IN (Select Distinct Jobid FROM AudiocallsJob WHERE status='Cancelled')");
+                db.Database.ExecuteSqlCommand("DELETE FROM  AudiocallsJob WHERE Status='Cancelled'");
+            }
+
+
+            //Get Data To Return 
+
+            List<NotificationsModel> notificationsModels = new List<NotificationsModel>();
+
+            SqlConnection con = new SqlConnection(Helper.GetConnectionString());
+            string query = "EXEC [dbo].[GetNotifications] " + userId + " ";
+            SqlCommand sqlcomm = new SqlCommand(query, con);
+            con.Open();
+            SqlDataAdapter adapter = new SqlDataAdapter();
+            sqlcomm.CommandTimeout = 1800000000;
+            adapter.SelectCommand = sqlcomm;
+            DataSet ds = new DataSet();
+            adapter.Fill(ds);
+            con.Close();
+
+
+            if (ds != null && ds.Tables.Count > 0 && ds.Tables[0].Rows.Count > 0)
+            {
+                foreach (DataRow row in ds.Tables[0].Rows)
+                {
+
+                    NotificationsModel notificationsModel = new NotificationsModel
+                    {
+                        JobId = row["JobId"].ToString(),
+                        Progress = row["Progress"].ToString(),
+                        CompletedOn = row["CompletedOn"].ToString(),
+                        Status = row["Status"].ToString(),
+                        DownloadLink = row["DownloadLink"].ToString()
+                    };
+
+                    notificationsModels.Add(notificationsModel);
+                }
+            }
+
+
+
+
+            return notificationsModels;
+        }
+
+        public void DeleteAudioRequest(string JobId)
+        {
+
+            using (var db = new CMDbContext())
+            {
+                AudioCallsJob audioCallsJob = new AudioCallsJob();
+                audioCallsJob = db.AudioCallsJobs.Where(x => x.JobId == JobId).First();
+                if ((audioCallsJob.JobId == JobId) && (audioCallsJob.Status.ToUpper() == "Requested".ToUpper()))
+                {
+                    db.AudioCallsJobs.Remove(audioCallsJob);
+                }
+                else if (audioCallsJob.JobId == JobId)
+                {
+                    audioCallsJob.Status = "Cancelled";
+                }
+                db.SaveChanges();
+            }
+
+        }
+        public List<TitleVMClientsList> GetClientsList()
+        {
+            using (var _db = new CMDbContext())
+            {
+                var data = (from tc in _db.TblClients
+                            where tc.DisplayName != null
+                            orderby tc.DisplayName
+                            select new TitleVMClientsList
+                            {
+                                Id = tc.Id,
+                                ClientName = tc.ClientName,
+                                DisplayName = tc.DisplayName
+                            });
+                return data.ToList();
+            }
+        }
+        public List<TitleVMDesignationList> GetDesignationList()
+        {
+            using (var _db = new CMDbContext())
+            {
+                var data = (from ud in _db.UserDesignations
+                            where ud.IsActive == 1
+                            orderby ud.Designation
+                            select new TitleVMDesignationList
+                            {
+                                DesignationId = ud.DesignationId,
+                                Designation = ud.Designation
+                            }).Distinct();
+                return data.ToList();
+            }
+        }
+        public List<TitleVMUnredactedList> GetLocalIP(int ClientID)
+        {
+            using (var _db = new CMDbContext())
+            {
+                var data = (from tc in _db.TblClients
+                            where tc.Id == ClientID
+                            select new TitleVMUnredactedList
+                            {
+                                Id = tc.Id,
+                                DisplayName = tc.DisplayName,
+                                UnredactedUrl = tc.UnredactedUrl
+                            }).Distinct();
+                return data.ToList();
+            }
+        }
+        public List<UserSetupVM> GetFilteredUsers(string search)
+        {
+            if (String.IsNullOrEmpty(search))
+            {
+                return GetUsersByRole();
+            }
+            else
+            {
+                using (var _db = new CMDbContext())
+                {
+                    var data = from ud in _db.TblUserDetails
+                               join anu in _db.AspNetUsers on ud.UserId equals anu.Id
+                               where ud.IsDeleted != 1 && ud.AssignedClients == search
+                               && ((ActiveUser.Roles.Contains(UserRoles.ClientAdmin) && ud.UserType == UserTypes.External) || ActiveUser.Roles.Contains(UserRoles.ProvanaAdmin))
+                               orderby ud.Id
+                               select new UserSetupVM
+                               {
+                                   Id = ud.Id,
+                                   Name = ud.UserName,
+                                   Image = ud.Image,
+                                   UserType = ud.UserType,
+                                   IsActive = ud.IsActive,
+                                   Email = anu.Email,
+                                   UserId = anu.Id,
+                                   UserName = anu.UserName,
+                                   Password = null,
+                                   ConfirmPassword = null,
+                                   IsUnredacted = ud.IsUnredacted,
+                                   Roles = (from anur in _db.AspNetUserRoles
+                                            join anr in _db.AspNetRoles on anur.RoleId equals anr.Id
+                                            orderby anr.Name
+                                            where anur.UserId == anu.Id
+                                            select new AspNetRoleVM
+                                            {
+                                                Id = anr.Id,
+                                                Title = anr.Name
+                                            }).ToList(),
+                                   Clients = (from uc in _db.TblUserClients
+                                              join c in _db.TblClients on uc.ClientId equals c.Id
+                                              orderby c.DisplayName
+                                              where uc.UserDetailId == ud.Id
+                                              select new TitleVM
+                                              {
+                                                  Id = uc.ClientId,
+                                                  Title = c.DisplayName
+                                              }).ToList(),
+                                   PowerBIDasboards = (from ad in _db.AssignedDashBoards
+                                                       join cd in _db.ClientDashBoards on ad.ClientDashBoardId equals cd.Id
+                                                       join clnt in _db.TblClients on cd.ClientId equals clnt.Id
+                                                       orderby cd.BoardName
+                                                       where ad.UserDetailId == ud.Id
+                                                       select new TitleVM
+                                                       {
+                                                           Id = cd.Id,
+                                                           Title = clnt.ClientName + "-" + cd.BoardName
+                                                       }).ToList(),
+                               };
+                    return data.ToList();
+                }
+            }
+        }
+        public List<TitleVMClientsList> GetReviewedBydata(int[] clientIds)
+        {
+            using (var _db = new CMDbContext())
+            {
+                var data = (from cm in _db.CallModifiers
+                            join id in clientIds on cm.ClientId equals id
+                            where cm.IsClientUser == true
+                            orderby cm.ClientName
+                            select new TitleVMClientsList
+                            {
+                                Id = cm.ClientId,
+                                ClientName = cm.ClientName,
+                                userid = cm.Userid,
+                                UserName = cm.UserName
+                            }).Distinct();
+                return data.ToList();
+            }
+        }
+        public List<TitleVM> GetAssignedonlyDash(int? userDetId)
+        {
+            using (var _db = new CMDbContext())
+            {
+                var data = from ad in _db.AssignedDashBoards
+                           where ad.UserDetailId == userDetId
+                           select new TitleVM
+                           {
+                               DashID = ad.ClientDashBoardId,
+                               PageNames = ad.Pages,
+                               MetaData = ad.MetaData,
+                               ReviewedBy = ad.ReviewedBy
+                           };
+                return data.ToList();
+            }
+        }
+        public List<TitleVM> getClientName(int clientID)
+        {
+            using (var _db = new CMDbContext())
+            {
+                var data = (from tc in _db.TblClients
+                            where tc.Id == clientID
+                            select new TitleVM
+                            {
+                                ClientCallModName = tc.ClientName
+                            }).Distinct();
+                return data.ToList();
+            }
+        }
+
+        //https://provanadev.visualstudio.com/ICAP/_workitems/edit/26438/
+        //public bool HasFeaturePermission(int featureId, string role, int clientId)
+        //{
+        //    try
+        //    {
+        //        using (var _db = new CMDbContext())
+        //        {
+        //            var data = _db.FeaturesPermissions.Where(m => m.Id == featureId && m.IsActive == 1);
+        //            if (data != null && data.Count() > 0)
+        //            {
+        //                data.First();
+        //                dynamic filters = Newtonsoft.Json.JsonConvert.DeserializeObject<dynamic>(data.First().Filters);
+
+        //                if (data.First().FilterType.ToLower() == "negative")
+        //                    return !IsFeatureFilterMatched(filters.Filters, role, clientId);
+        //                else if (data.First().FilterType.ToLower() == "positive")
+        //                    return IsFeatureFilterMatched(filters.Filters, role, clientId);
+        //            }
+        //            return true;
+        //        }
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        return true;
+        //    }
+        //}
+
+        //https://provanadev.visualstudio.com/ICAP/_workitems/edit/26438/
+        private bool IsFeatureFilterMatched(dynamic filters, string role, int clientId)
+        {
+            foreach (var filter in filters)
+            {
+                var roles = (List<string>)filter.Roles.ToObject<List<string>>();
+                var clients = (List<int>)filter.ClientIds.ToObject<List<int>>();
+
+                if (roles.Find(m => m.ToLower() == role.ToLower()) != null)
+                {
+                    if (clients.Count() == 0 || clients.Contains(clientId))
+                        return true;
+                }
+                else if (clients.Contains(clientId))
+                {
+                    if (roles.Count() == 0 || roles.Find(m => m.ToLower() == role.ToLower()) != null)
+                        return true;
+                }
+            }
+            return false;
+        }
+        public bool GetUnredactedAcess(int clientId)
+        {
+            using (var _db = new CMDbContext())
+            {
+                var data = (from tc in _db.TblClients
+                            where tc.Id == clientId && tc.IsUnredacted == true
+                            select new ClientDashBoardVM
+                            {
+                                Id = tc.Id
+                            });
+                if (data.ToList().Count == 1)
+                {
+                    return true;
+                }
+                else
+                {
+                    return false;
+                }
+            }
+        }
+        public List<ClientAccessFilterVM> GetAddAccData(int userDetId, int[] clientId)
+        {
+            using (var _db = new CMDbContext())
+            {
+                var data = _db.GetAafData(userDetId).Select(x => new ClientAccessFilterVM
+                {
+                    ClientId = x.ClientId,
+                    Metadata = x.Metadata,
+                    MetadataName = x.FriendlyName,
+                    MetaValues = x.MetaValues,
+                    AssignedByRole = x.AssignedByRole
+                }).Distinct().ToList();
+                return data;
+                //var data = from caf in _db.ClientAccessFilters
+                //           join am in _db.AssignedMetaDatas on
+                //           new { ClientId = caf.ClientId.Value, Metadata = Convert.ToInt32(caf.Metadata) }
+                //           equals
+                //           new { ClientId = am.ClientId, Metadata = am.MasterMetadataId }
+                //           join id in clientId on caf.ClientId equals id
+                //           where caf.UserId == userDetId
+                //           select new ClientAccessFilterVM
+                //           {
+                //               ClientId = caf.ClientId,
+                //               Metadata = caf.Metadata,
+                //               MetadataName = am.FriendlyName,
+                //               MetaValues = caf.MetaValues
+                //           };
+                //return data;
+            }
+        }
+        public List<TblUserDetailVM> GetAssignedClients(int userDetId)
+        {
+            using (var _db = new CMDbContext())
+            {
+                var data = from tud in _db.TblUserDetails
+                           where tud.Id == userDetId && tud.IsActive == true
+                           select new TblUserDetailVM
+                           {
+                               Id = tud.Id,
+                               UserName = tud.UserName,
+                               UserType = tud.UserType,
+                               AssignedClients = tud.AssignedClients
+                           };
+                return data.ToList();
+            }
+        }
+        public List<ClientAccessFilterVM> GetFieldsAsssignedByProvanAdmin(int id)
+        {
+            using (var _db = new CMDbContext())
+            {
+
+                //var data = (from caf in _db.ClientAccessFilters
+                //            where (caf.AssignedByRole == 1 || caf.AssignedByRole == 2) && caf.UserId == id
+                //            select new ClientAccessFilterVM
+                //            {
+                //                Metadata = caf.Metadata,
+                //                AssignedByRole = caf.AssignedByRole
+                //            }).Distinct().ToList();
+
+                var data = (from caf in _db.ClientAccessFilters
+                            where caf.UserId == id
+                            select new ClientAccessFilterVM
+                            {
+                                Metadata = caf.Metadata,
+                                AssignedByRole = caf.AssignedByRole
+                            }).Distinct().ToList();
+                return data;
+            }
+        }
+
+        public List<GetClientSource> GetClientSourcesList(string clientids)
+        {
+            var ids = clientids.Split(',').Select(x => int.Parse(x)).ToArray();
+            using (CMDbContext entity = new CMDbContext())
+            {
+                return (from sc in entity.GetClientSources
+                        join id in ids on sc.Clientid equals id
+                        select sc
+                         ).ToList();
+            }
+        }
+
+        public List<TblUserClientSource> GetClientSelectedSourcesList(string clientids,int Userid)
+        {
+            var ids = clientids.Split(',').Select(x => int.Parse(x)).ToArray();
+            using (CMDbContext entity = new CMDbContext())
+            {
+                return (from sc in entity.TblUserClientSources
+                        join id in ids on sc.ClientId equals id
+                        where sc.UserDetailId == Userid
+                        select sc
+                         ).ToList();
+            }
+        }
+
+    }
+}
