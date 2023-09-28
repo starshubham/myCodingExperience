@@ -1,0 +1,379 @@
+//using ICap.Domain;
+using ICap.Domain;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Web;
+using ICap.Models;
+using ICap.ViewModels;
+using Newtonsoft.Json;
+using System.Data.SqlClient;
+using System.Data;
+using ICap.CallMinerAPI;
+
+namespace ICap.BusinessLayer
+{
+    public class CommomServices : BaseServices
+    {
+        CMDbContext dbContext;
+        public CommomServices()
+        {
+            dbContext = new CMDbContext();
+        }
+
+        public TblUserDetail GetUserInfoDetailByUserId(string userId, out List<string> roles, out AspNetUser aspNetUser)
+        {
+            roles = (
+                  from anur in dbContext.AspNetUserRoles
+                  join anr in dbContext.AspNetRoles on anur.RoleId equals anr.Id
+                  where anur.UserId == userId
+                  select anr.Name
+                ).ToList();
+            aspNetUser = dbContext.AspNetUsers.FirstOrDefault(x => x.Id == userId);
+            return dbContext.TblUserDetails.FirstOrDefault(x => x.UserId == userId);
+        }
+
+        public TblUserDetail GetUserDetailByUserId(string userId)
+        {
+            return dbContext.TblUserDetails.FirstOrDefault(x => x.UserId == userId);
+        }
+
+        public List<AspNetRole> GetAspNetRoles()
+        {
+            return dbContext.AspNetRoles.OrderBy(x => x.Name).ToList();
+        }
+
+        public int UpdateFirstLogin(string userId)
+        {
+            var userDetail = dbContext.TblUserDetails.FirstOrDefault(x => x.UserId == userId);
+            if (userDetail != null)
+            {
+                userDetail.FirstLoginOn = DateTime.Now;
+                dbContext.TblUserDetails.Attach(userDetail);
+                dbContext.Entry(userDetail).State = System.Data.Entity.EntityState.Modified;
+                return dbContext.SaveChanges();
+            }
+            return 0;
+        }
+        public string GetUserIdbyId(int id)
+        {
+            var obj = dbContext.TblUserDetails.FirstOrDefault(x => x.Id == id);
+            return obj.UserId;
+        }
+        public List<AspNetRoleVMRole> GetUserRole(string userid)//id=97..
+        {
+            var data = (from anur in dbContext.AspNetUserRoles
+                        join anr in dbContext.AspNetRoles on anur.RoleId equals anr.Id
+                        where anur.UserId == userid
+                        //where anur.UserId == (from tud in _db.TblUserDetails where tud.Id == id select new AspNetRoleVMRole { UserId = tud.UserId })
+                        select new AspNetRoleVMRole
+                        {
+                            Id = anr.Id,
+                            Name = anr.Name
+                        }).Distinct();
+            return data.ToList();
+
+            /*using (var _db = new CMDbContext())
+            {
+                var data = (from anur in _db.AspNetUserRoles
+                            join anr in _db.AspNetRoles on anur.RoleId equals anr.Id
+                            where anur.UserId == userid
+                            //where anur.UserId == (from tud in _db.TblUserDetails where tud.Id == id select new AspNetRoleVMRole { UserId = tud.UserId })
+                            select new AspNetRoleVMRole
+                            {
+                                Id = anr.Id,
+                                Name = anr.Name
+                            }).Distinct();
+                return data.ToList();
+            }*/
+            //return dbContext.AspNetRoles.OrderBy(x => x.Name).ToList();
+        }
+        public int UpdateProfileImage(int id, string image)
+        {
+            var userDetail = dbContext.TblUserDetails.FirstOrDefault(x => x.Id == id);
+            if (userDetail != null)
+            {
+                userDetail.Image = image;
+                dbContext.TblUserDetails.Attach(userDetail);
+                dbContext.Entry(userDetail).State = System.Data.Entity.EntityState.Modified;
+                return dbContext.SaveChanges();
+            }
+            return 0;
+        }
+        // Login tracking services
+        public int LoginTimeTracker(int UserId, string SessionId)
+        {
+            var clientId = dbContext.TblUserClients.Where(x => x.UserDetailId == UserId).OrderBy(x => x.ClientId).Select(x => x.ClientId).FirstOrDefault();
+            var logindetail = dbContext.UserLoginTimes.Where(x => x.UserId == UserId && x.SessionId == SessionId && x.LogoutTime == null).FirstOrDefault();
+            /*var clientId = new CMDbContext().TblUserClients.Where(x => x.UserDetailId == UserId).OrderBy(x => x.ClientId).Select(x => x.ClientId).FirstOrDefault();
+            var logindetail = new CMDbContext().UserLoginTimes.Where(x => x.UserId == UserId && x.SessionId == SessionId && x.LogoutTime == null).FirstOrDefault();*/
+            int recordsAffected = 0;
+            if (logindetail == null)
+            {
+                UserLoginTime userlogin = new UserLoginTime();
+                userlogin.UserId = UserId;
+                userlogin.SessionId = SessionId;
+                userlogin.LoginTime = DateTime.UtcNow;
+                userlogin.CreatedOn = DateTime.UtcNow.Date;
+                userlogin.OfflineStatus = 1;
+                userlogin.ClientId = (clientId == 0 ? null : (int?)clientId);
+                dbContext.UserLoginTimes.Add(userlogin);
+                recordsAffected = dbContext.SaveChanges();
+            }
+
+            return recordsAffected;
+        }
+        public int LogoutTimeTracker(int UserId, string SessionId, int IsSessionExpire)
+        {
+            var userlogin = dbContext.UserLoginTimes.Where(x => x.UserId == UserId && x.SessionId == SessionId && x.LogoutTime == null).FirstOrDefault();
+            if (userlogin != null)
+            {
+                userlogin.LogoutTime = DateTime.UtcNow;
+                userlogin.OfflineStatus = 0;
+                userlogin.IsSessionExpired = IsSessionExpire;
+                dbContext.SaveChanges();
+                return 1;
+            }
+            return 0;
+        }
+
+        public int LogoutTimeTrackerWithSessionId(string SessionId, int IsSessionExpire)
+        {
+            var userlogin = dbContext.UserLoginTimes.Where(x => x.SessionId == SessionId && (x.LogoutTime == null || x.LoginTime > x.LogoutTime)).FirstOrDefault();
+            if (userlogin != null)
+            {
+                userlogin.LogoutTime = DateTime.UtcNow;
+                userlogin.OfflineStatus = 0;
+                userlogin.IsSessionExpired = IsSessionExpire;
+                dbContext.SaveChanges();
+                return 1;
+            }
+            return 0;
+        }
+
+        public int LogoutTimeTrackerWithForceFully(int UserId, int IsSessionExpire)
+        {
+            var userlogin = dbContext.UserLoginTimes.Where(x => x.UserId == UserId && x.LogoutTime == null).OrderByDescending(x => x.Id).FirstOrDefault();
+            if (userlogin != null)
+            {
+                userlogin.LogoutTime = DateTime.UtcNow;
+                userlogin.OfflineStatus = 0;
+                userlogin.IsSessionExpired = IsSessionExpire;
+                dbContext.SaveChanges();
+                return 1;
+            }
+            return 0;
+        }
+        public List<GetClientLoginDetailsReturnModel> GetLoginUsers(DateTime fromdate, DateTime todate, int userId)
+        {
+            var date = DateTime.UtcNow.Date;
+            // return dbContext.UserLoginTimes.Where(x => x.LoginTime == date).ToList();
+
+            return dbContext.GetClientLoginDetails(fromdate, todate, userId).ToList();
+            /*using (CMDbContext db = new CMDbContext())
+            {
+                return db.GetClientLoginDetails(fromdate, todate, userId).ToList();
+            }*/
+        }
+        //end
+
+        public List<AspNetPermissions> GetPermissionsByRoleType(string UserType, string userId)
+        {
+            //using (var _db = new CMDbContext())
+            //{
+            var roles = (
+              from anur in dbContext.AspNetUserRoles
+              join anr in dbContext.AspNetRoles on anur.RoleId equals anr.Id
+              where anur.UserId == userId
+              //orderby anr.RoleHierar
+              select anr.Id
+            )//.FirstOrDefault();//
+            .ToList();
+            //string rolesP = string.Join(",", roles);
+            var data = (from papi in dbContext.PermissionsApis  //_db to dbContext
+                                                                //where papi.UserType == UserType && papi.RoleId == rolesP && papi.IsActive==1
+                        where papi.UserType == UserType && roles.Contains(papi.RoleId) && papi.IsActive == 1
+                        select new AspNetPermissions
+                        {
+                            UserType = papi.UserType,
+                            RoleId = papi.RoleId,
+                            PermissionsJSON = papi.PermissionsJson
+                        }).Distinct();
+            return data.ToList();
+            //}
+        }
+        public List<AspNetPermissions> GettzRollback(string UserType, string roleid)
+        {
+            //using (var _db = new CMDbContext())
+            //{
+            var data = (from papi in dbContext.PermissionsApis  //_db to dbContext
+                        where papi.UserType == UserType && papi.RoleId == roleid && papi.IsActive == 1
+                        select new AspNetPermissions
+                        {
+                            UserType = papi.UserType,
+                            RoleId = papi.RoleId,
+                            PermissionsJSON = papi.PermissionsJson
+                        }).Distinct();
+            return data.ToList();
+            //}
+        }
+
+        public string GetActiveUserPermissionForPage(string pageName)
+        {
+            UserInfo user = new UserInfo();
+            Root2 deserializedClientPermi = JsonConvert.DeserializeObject<Root2>(user.Permissions);
+            string defaultPermissionStr = "{\"root\":[{\"Roles\":\"" + user.Roles + "\",\"UserType\":\"" + user.UserType + "\",\"PermissionRoot\":[]}]}";
+            if (deserializedClientPermi != null)
+            {
+                foreach (var item in deserializedClientPermi.PermissionRoot.ToList())
+                {
+                    if (item.PageName.ToUpper() != pageName.ToUpper())
+                    {
+                        deserializedClientPermi.PermissionRoot.Remove(item);
+                    }
+                }
+                return JsonConvert.SerializeObject(deserializedClientPermi);
+            }
+
+            return defaultPermissionStr;
+        }
+
+        public bool UserHasPermissions(string pageName, string featureName, string selectedClient)
+        {
+            UserInfo user = new UserInfo();
+            Root2 deserializedClientPermi = JsonConvert.DeserializeObject<Root2>(user.Permissions);
+
+            if (String.IsNullOrWhiteSpace(selectedClient))
+            {
+                selectedClient = "";
+            }
+
+            if (deserializedClientPermi != null)
+            {
+                foreach (var item in deserializedClientPermi.PermissionRoot.ToList())
+                {
+                    if ((item.PageName.ToUpper() == pageName.ToUpper()) && (item.FeatureName.ToUpper() == featureName.ToUpper()))
+                    {
+                        if (selectedClient == "")
+                        { return (item.Value == 0) ? false : true; }
+
+                        if (item.Value == 0)
+                        { return item.ClientExclusion.Contains(selectedClient) ? true : false; }
+
+                        if (item.Value == 1)
+                        { return item.ClientExclusion.Contains(selectedClient) ? false : true; }
+                    }
+                }
+            }
+
+            return true; // The default access to any feature is true.
+        }
+        public List<AspNetPermissions> GetPermissionsForRangeSlider()
+        {
+            //using (var _db = new CMDbContext())
+            //{
+            var data = (from papi in dbContext.PermissionsApis
+                        where papi.UserType == "ALL" && papi.IsActive == 1
+                        select new AspNetPermissions
+                        {
+                            UserType = papi.UserType,
+                            RoleId = papi.RoleId,
+                            PermissionsJSON = papi.PermissionsJson
+                        }).Distinct();
+            return data.ToList();
+            //}
+        }
+
+        public List<decimal> GetSentimentsfromDB(int callId)
+        {
+            //CM_STG_ExportContact.FirstOrDefault(x => x.call == userId);
+            //return dbContext.cm_stg_export
+            string sqlString = string.Empty;
+            List<decimal> lstSentiments = new List<decimal>();
+            sqlString = string.Format("Select isnull(SentimentCompound,0.0),isnull(SentimentPositive,0.0),isnull(SentimentNegative,0.0) from CM_STG.Export_Contact WHERE Call_Id = {0}", callId);
+            using (SqlConnection connection = new SqlConnection(Helper.GetConnectionString()))
+            {
+                connection.Open();
+                using (SqlCommand sqlCommand = new SqlCommand(sqlString, connection))
+                {
+                    SqlDataAdapter da = new SqlDataAdapter(sqlString, connection);
+                    DataTable dt = new DataTable();
+                    da.Fill(dt);
+                    for (int j = 0; j <= dt.Columns.Count - 1; j++)
+                    {
+                        var cell = dt.Rows[0].Field<decimal>(j);
+                        lstSentiments.Add(cell);
+                    }
+                }
+            }
+            return lstSentiments;
+        }
+
+        public List<string> GetIPACSHistory(int clientId, int callId,string fromDate,string toDate, string AudioPlayerType)
+        {
+            DateTime fromDateHst = DateTime.Parse(fromDate);
+            DateTime toDateHst = DateTime.Parse(toDate).AddDays(1);
+
+            using (dbContext = new CMDbContext())
+            {
+
+                var historyJsonData = dbContext.IcapipacsIntegrationHistories
+                .Where(p => p.CallId == callId && p.ClientId == clientId && p.AudioPlyerType==AudioPlayerType &&( p.CreatedDate >= fromDateHst && p.CreatedDate < toDateHst) )
+                .OrderByDescending(p => p.CreatedDate)
+                .Select(p => p.IpacsJson)
+                .ToList();
+
+                return historyJsonData;
+            }
+
+        }
+
+
+        public int SaveIcapIpacsIntegrationHistory(IcapipacsIntegrationHistory obj)
+        {
+            using (CMDbContext db = new CMDbContext())
+            {
+
+                db.IcapipacsIntegrationHistories.Add(obj);
+                db.SaveChanges();
+                return obj.Id;
+
+            }
+        }
+        public int UpdateIpacsSyncStatus(int Id, string callURL, int NonConformityId)
+        {
+            var obj = dbContext.IcapipacsIntegrationHistories.Where(x => x.Id == Id).FirstOrDefault();
+            if (obj != null)
+            {
+                obj.SyncStatus = 1;
+                obj.IpacsNonConformityId = NonConformityId;
+                obj.AudioCallLink = callURL;
+                dbContext.IcapipacsIntegrationHistories.Attach(obj);
+                dbContext.Entry(obj).State = System.Data.Entity.EntityState.Modified;
+                return dbContext.SaveChanges();
+            }
+            return 0;
+        }
+
+        public List<IcapIntegrationdetails> GetIpacsIntegrationdetailsforCall(int callID)
+        {            
+            using (var con = new SqlConnection(Helper.GetConnectionString()))
+            {
+                con.Open();
+                SqlCommand cmm = new SqlCommand("GetNonConformityData", con);
+                cmm.CommandType = CommandType.StoredProcedure;
+                cmm.Parameters.AddWithValue("@CallId", callID);
+                SqlDataAdapter adapter = new SqlDataAdapter();
+                cmm.CommandTimeout = 1800000000;
+                adapter.SelectCommand = cmm;
+                DataSet ds = new DataSet();
+                adapter.Fill(ds);
+                con.Close();
+                var data = ds.Tables[0].AsEnumerable()
+                    .Select(x => new IcapIntegrationdetails { ClientId = x.Field<int>("ClientId"), isipacsintegration = x.Field<bool>("isipacsintegration"), partnercode = x.Field<String>("partnercode"), nonconfirmityapikey = x.Field<string>("nonconfirmityapikey") }).ToList();
+                return data;
+            }
+        }
+
+    }
+}

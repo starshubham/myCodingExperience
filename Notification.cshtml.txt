@@ -1,0 +1,140 @@
+
+@model List<ICap.Models.NotificationsModel>
+    @{
+    ViewBag.Title = "Notifications";
+    }
+
+
+    <div class="clearfix"></div>
+    <div class="breadcrumb no-mar-bot">
+        <div class="container[fluid">
+            <a href='@Url.Action("Index", "PowerBIDashboard")'>Dashboard</a> | Profile@*Change Password*@
+        </div>
+    </div>
+    <div class="container">
+        <div class="white-form-wrapper col-md-12">
+
+
+            <div class="row">
+                <input class="activeuserid" type="hidden" value=@ViewBag.Profile_Id />
+                <div class=""></div>
+                <div class="col-md-12 JobRequests">
+                    <table class="table table-bordered table-hover">
+                        <thead>
+                            <tr>
+                                <th>Job Request Id</th>
+                                <th>CallsCompleted/TotalCalls</th>
+                                <th>Completed On</th>
+                                <th>Download</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @if (Model.Count > 0)
+                            {
+                                foreach (var notificationsModel in Model)
+                                {
+                            <tr>
+                                <td>@notificationsModel.JobId</td>
+                                <td>@notificationsModel.Progress</td>
+                                <td>@notificationsModel.CompletedOn</td>
+                                @{
+                                    if (notificationsModel.Status.ToUpper() == "Completed".ToUpper())
+                                    {
+                                        <td><a href=@notificationsModel.DownloadLink class="btn btn-blue btn-download">Download Calls</a></td>
+                                    }
+                                    else if (notificationsModel.Status.ToUpper() == "Cancelled".ToUpper())
+                                    {
+                                        <td><a class="btn btn-blue" >Cancelled</a></td>
+
+                                    }
+                                    else
+                                    {
+                                        <td><a class="btn btn-red" onclick="CancelAudioRequest(this.id)" id="@notificationsModel.JobId">Cancel Request</a></td>
+                                    }
+                                }
+
+                            </tr>
+                                }
+                            }
+                            else
+                            {
+                                <tr>
+                                    <td colspan="12" align="center">No Requests</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+
+
+        </div>
+    </div>
+
+
+
+
+
+
+
+    @section Scripts {
+
+
+    <link href="/Scripts/Croppie/croppie.min.css" rel="stylesheet" />
+    <script src="/Scripts/Croppie/croppie.min.js"></script>
+
+    <script type="text/javascript"  >
+        
+            function CancelAudioRequest(jobid) {
+                var requestid = jobid;
+                $("#" + requestid).attr('onclick', '');
+                $.ajax(
+                    {
+                        url: '@Url.Action("CancelAudioRequest", "Manage")',
+                        type: 'post',
+                        cache: false,
+                        async: true,
+                        data: {'JobId':requestid},
+                        success: function (result) {
+                            if (result == "success") {
+                                $("#" + requestid).attr('Class', 'btn btn-blue');
+                                $('#' + requestid).text("Cancelled");
+                            }
+                            
+                        },
+                        error: function (result) {
+                            alert("Error While Canceling the request. Please try again.");
+                        }
+                    });
+            }
+
+        $(document).ready(function () {
+
+
+            function loadPartialView() {
+                $.ajax(
+                    {
+                        url: '@Url.Action("_PartialNotifications", "Manage")',
+                        type: 'post',
+                        cache: false,
+                        async: true,
+                        success: function (result) {
+                            $("div .JobRequests").html(result);
+                        }
+                    });
+            }
+
+            function RefreshPartial() {
+                //this will wait 10 seconds and then fire the load partial function
+                setTimeout(function () {
+                    loadPartialView();
+                    //recall this function so that it will continue to loop
+                    RefreshPartial();
+                }, 10000);
+            }
+                //initialize the loop
+            RefreshPartial();
+        });
+    </script>
+        }

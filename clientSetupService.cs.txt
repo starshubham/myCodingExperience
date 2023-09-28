@@ -1,0 +1,622 @@
+using System;
+using System.Collections.Generic;
+using System.Data;
+using System.Data.Entity;
+using System.Data.SqlClient;
+using System.Linq;
+using System.Text;
+using System.Web;
+using ICap.Domain;
+using ICap.Models;
+using ICap.ViewModels;
+
+namespace ICap.BusinessLayer
+{
+    public class ClientSetupService
+    {
+        UserInfo ActiveUser
+        {
+            get
+            {
+                return new UserInfo();
+            }
+        }
+        public List<ScoreAndComponentSection> GetScoreAndComponentSection(int cId)
+        {
+            List<ScoreAndComponentSection> objRes = new List<ScoreAndComponentSection>();
+            AnalystServices _services = new AnalystServices();
+            AssignComponentToClientModel model = new AssignComponentToClientModel();
+            var scoreData = _services.GetScoreList();
+
+            List<ScoreList> listScoreList = new List<ScoreList>();
+            listScoreList.AddRange(scoreData);
+            using (CMDbContext db = new CMDbContext())
+            {
+
+                var secList = db.TblScoreComponentSections.Where(x => x.IsActive == true).ToList();
+
+                var ListAddedComponent = db.AssignScoreToClients.Where(x => x.ClientId == cId).ToList();
+                if (ListAddedComponent != null)
+                {
+                    var disTinctSec = ListAddedComponent.Select(x => x.SectionId).Distinct();
+                    if (disTinctSec.ToList().Count > 0)
+                    {
+                        foreach (var item in disTinctSec)
+                        {
+                            ScoreAndComponentSection sc = new ScoreAndComponentSection();
+                            sc.ScoreListData.AddRange(listScoreList);
+                            var selectedScoreList = ListAddedComponent.Where(x => x.SectionId == item).Select(x => (int)x.ScoreId).Distinct().ToList();
+
+                            sc.SelectedScoreList.AddRange(selectedScoreList);
+
+                            var ScoreComponent = this.GetMultiComponentByMultiScore(cId, string.Join(",", selectedScoreList));
+
+                            sc.ScoreComponentData.AddRange(ScoreComponent);
+                            var selectedScoreComponentList = ListAddedComponent.Where(x => x.SectionId == item).Select(x => (int)x.ComponentId).ToList();
+                            sc.SelectedScoreComponentList.AddRange(selectedScoreComponentList);
+                            sc.SelectedSectionId = item == null ? 0 : (int)item;
+                            if (item != null)
+                            {
+                                var secName = secList.FirstOrDefault(x => x.Id == (int)item).SectionName;
+                                sc.SectionName = secName;
+                            }
+                            else
+                            {
+                                sc.SectionName = "N/A";
+                            }
+                            objRes.Add(sc);
+                        }
+                        return objRes;
+                    }
+                    else
+                    {
+                        return null;
+                    }
+
+
+
+                }
+
+            }
+            return null;
+        }
+
+        public List<ScoreComponentList> GetMultiComponentByMultiScore(int client, string scoreId)
+        {
+            using (CMDbContext entity = new CMDbContext())
+            {
+                var data = entity.GetMultiComponentByMultiScore(client, scoreId).Select(x => new ScoreComponentList { ScoreComponentId = (int)x.ScoreComponentID, ScoreComponentName = x.ComponentName, ScoreName = x.ScoreName }).OrderBy(x => x.ScoreComponentName).ToList();
+                return data;
+            }
+
+        }
+
+        public List<Timezone> BindTimeZone()
+        {
+            using (CMDbContext entity = new CMDbContext())
+            {
+                return entity.Timezones.ToList();
+            }
+        }
+        public dynamic GetClientNameById(int client)
+        {
+            using (CMDbContext entity = new CMDbContext())
+            {
+                var data = entity.TblClients.Where(x => x.Id == client).Select(x => new { x.DisplayName, PowerBiPin = x.PowerBipin, x.ClientName, x.LogoName, x.TimeZoneId }).FirstOrDefault();
+                return data;
+            }
+
+        }
+
+        public List<ClientDashboardUrl> GetClientDashboardUrlList(int cId)
+        {
+            using (CMDbContext entity = new CMDbContext())
+            {
+                var data = entity.ClientDashBoards.Where(x => x.ClientId == cId).Select(x => new ClientDashboardUrl
+                {
+                    Id = x.Id,
+                    DashboardName = x.BoardName,
+                    PowerBiUrl = x.DashboardUrl
+
+                }).ToList();
+                return data;
+            }
+        }
+
+        public int SaveClientDashboard(List<ClientDashboardUrl> listDash, int cId)
+        {
+            List<ClientDashBoard> listAdd = new List<ClientDashBoard>();
+            List<ClientDashBoard> listUpdate = new List<ClientDashBoard>();
+
+            List<int> listRemove = new List<int>();
+
+            using (CMDbContext entity = new CMDbContext())
+            {
+
+                foreach (var item in listDash)
+                {
+
+                    if (!string.IsNullOrEmpty(item.DashboardName) && item.Id == 0 && !string.IsNullOrEmpty(item.PowerBiUrl))
+                    {
+                        listAdd.Add(new ClientDashBoard { ClientId = cId, DashboardUrl = item.PowerBiUrl, BoardName = item.DashboardName, IsActive = true });
+                    }
+                    else if (item.Id > 0 && !string.IsNullOrEmpty(item.DashboardName))
+                    {
+                        ClientDashBoard updateLists = entity.ClientDashBoards.FirstOrDefault(x => x.Id == item.Id);
+                        if (updateLists != null)
+                        {
+                            updateLists.DashboardUrl = item.PowerBiUrl;
+                            updateLists.BoardName = item.DashboardName;
+
+                            entity.ClientDashBoards.Attach(updateLists);
+                            entity.Entry(updateLists).State = EntityState.Modified;
+                        }
+                    }
+                    else if (item.Id > 0)
+                    {
+                        listRemove.Add(item.Id);
+                    }
+
+                }
+
+                entity.SaveChanges();
+
+                if (listRemove.Count > 0)
+                {
+                    var removeObj = entity.ClientDashBoards.Where(x => x.ClientId == cId && listRemove.Contains(x.Id));
+                    if (removeObj.Count() > 0)
+                    {
+                        entity.ClientDashBoards.RemoveRange(removeObj);
+                        entity.SaveChanges();
+                    }
+                }
+
+                if (listAdd.Count > 0)
+                {
+                    entity.ClientDashBoards.AddRange(listAdd);
+                    entity.SaveChanges();
+                }
+
+
+            }
+            return 0;
+        }
+
+        public List<ClientMetaData> GetClientMetaDataList(int cId)
+        {
+            using (CMDbContext entity = new CMDbContext())
+            {
+                var data = entity.AssignedMetaDatas.Where(x => x.ClientId == cId).Select(x => new ClientMetaData
+                {
+                    Id = x.MasterMetadataId,
+                    MasterMetaDataId = x.MasterMetadataId,
+                    DisplayName = x.FriendlyName
+                }).ToList();
+                return data;
+            }
+        }
+
+        public int UpdateClient(AssignComponentToClientModel model)
+        {
+            using (CMDbContext entity = new CMDbContext())
+            {
+                var client = entity.TblClients.FirstOrDefault(x => x.Id == model.ID);
+                client.PowerBipin = model.PowerBiPin;
+                client.DisplayName = model.ClientDisplayName;
+                client.TimeZoneId = Convert.ToInt32(model.TimeZoneID);
+                return entity.SaveChanges();
+            }
+        }
+        public List<MasterMetaDataModel> GetMasterMetadataList()
+        {
+
+            using (CMDbContext entity = new CMDbContext())
+            {
+                return entity.MetadataMasters.Select(x => new MasterMetaDataModel
+                {
+                    Id = x.Id,
+                    DisplayName = x.MetadataEntityName
+                }).ToList();
+            }
+
+
+        }
+
+
+        public List<int> GetSelectedMetadaId(int cId)
+        {
+            using (CMDbContext entity = new CMDbContext())
+            {
+                return entity.AssignedMetaDatas.Where(x => x.ClientId == cId).Select(x => x.MasterMetadataId).ToList();
+            }
+        }
+
+        public int SaveClientMetada(List<ClientMetaData> listMeta, int cId)
+        {
+            List<AssignedMetaData> listToAdd = new List<AssignedMetaData>();
+            StringBuilder displayName = new StringBuilder();
+
+            foreach (var item in listMeta)
+            {
+
+                List<MetadataMaster> listMasterMetadata = new List<MetadataMaster>();
+                using (CMDbContext entity = new CMDbContext())
+                {
+                    listMasterMetadata.AddRange(entity.MetadataMasters);
+                }
+
+                if (item.DisplayName != "DDD")
+                {
+                    if (!string.IsNullOrEmpty(item.DisplayName))
+                    {
+                        displayName.Append(item.DisplayName);
+                    }
+                    else
+                    {
+                        displayName.Append(listMasterMetadata.Where(x => x.Id == item.Id).FirstOrDefault().MetadataEntityName);
+                    }
+                    listToAdd.Add(new AssignedMetaData
+                    {
+                        MasterMetadataId = item.Id,
+                        ClientId = cId,
+                        FriendlyName = displayName.ToString()
+
+
+                    });
+                    displayName.Clear();
+                }
+            }
+
+            using (CMDbContext entity = new CMDbContext())
+            {
+                var removeRange = entity.AssignedMetaDatas.Where(x => x.ClientId == cId);
+                entity.AssignedMetaDatas.RemoveRange(removeRange);
+                entity.SaveChanges();
+                entity.AssignedMetaDatas.AddRange(listToAdd);
+                return entity.SaveChanges();
+            }
+
+            return 0;
+        }
+
+        public List<MetaDataAndFreindlyName> GetMetadawithFriendlyName(int cId)
+        {
+            using (CMDbContext db = new CMDbContext())
+            {
+                return db.MetadataMasters.Join(db.AssignedMetaDatas, m => m.Id, a =>
+                a.MasterMetadataId, (m, a) => new { m, a }).Where(x => x.a.ClientId == cId).Select(x => new MetaDataAndFreindlyName
+                {
+                    MetadataName = x.m.MetadataEntityName,
+                    FreindlyName = x.a.FriendlyName
+                }).ToList();
+            }
+        }
+
+        public List<GetClientModificationHistoryReturnModel> GetClientHistory(int userId)
+        {
+            using (CMDbContext db = new CMDbContext())
+            {
+                return db.GetClientModificationHistory(userId).ToList();
+
+                //    .Select(x => new ClientHistorModify {
+                //    ClientName=x.ClientName,
+                //    ModifiedDate=(DateTime)x.DateModified
+                //}).ToList();
+            }
+        }
+        public int SaveClientUpdateHistory(int userId, string clientName, int clientId, string clientDisplayName)
+        {
+            using (CMDbContext db = new CMDbContext())
+            {
+                var clientNamestr = db.TblClients.FirstOrDefault(x => x.Id == clientId).ClientName;
+
+                ClientModificationHistory ob = new ClientModificationHistory();
+                ob.ClientId = clientId;
+                ob.ClientDisplayName = clientDisplayName;
+                ob.ClientName = clientNamestr;
+                ob.ModifiedBy = userId;
+                db.ClientModificationHistories.Add(ob);
+                return db.SaveChanges();
+
+            }
+        }
+        public int UpdateClientLogoName(string logoName, int cId)
+        {
+            using (CMDbContext db = new CMDbContext())
+            {
+                var client = db.TblClients.FirstOrDefault(x => x.Id == cId);
+                db.Entry(client).State = System.Data.Entity.EntityState.Modified;
+                client.LogoName = logoName;
+                return db.SaveChanges();
+            }
+        }
+        //Push Score Component
+        public int PushScoreComponent(int? sectionID, int? ScoreComponentID, string weight, int ClientID)
+        {
+            using (CMDbContext db = new CMDbContext())
+            {
+                int i = 0;
+                var data = db.AssignScoreToClients.Where(x => x.ClientId == ClientID && x.SectionId == sectionID && x.ComponentId == ScoreComponentID).FirstOrDefault();
+                if (data != null)
+                {
+                    if (string.IsNullOrEmpty(weight))
+                    {
+                        data.PushCriteria = null;
+                    }
+                    else
+                    {
+                        data.PushCriteria = weight.TrimEnd(',').TrimStart(',');
+                    }
+                    i = db.SaveChanges();
+
+                }
+                return i;
+            }
+        }
+        public int SetPushType(int? PushType, int ClientID)
+        {
+            using (CMDbContext db = new CMDbContext())
+            {
+                int i = 0;
+                var data = db.TblClients.Where(x => x.Id == ClientID).FirstOrDefault();
+                if (data != null)
+                {
+                    if (data.IsAutoPushed == 0 && PushType == 1)
+                    {
+                        db.UpdateDataForPushMethodSet(data.ClientName);
+                        data.IsAutoPushed = PushType;
+                    }
+                    else
+                    {
+                        data.IsAutoPushed = PushType;
+                    }
+                    i = db.SaveChanges();
+                }
+                return i;
+            }
+        }
+        public List<PushComponentModel> GetPushScoreComponent(int ClientID)
+        {
+            using (CMDbContext db = new CMDbContext())
+            {
+                List<PushComponentModel> data = (from c in db.AssignScoreToClients
+                                                 where c.ClientId == ClientID
+                                                 select new PushComponentModel
+                                                 {
+                                                     SectionID = c.SectionId,
+                                                     Section = c.SectionName,
+                                                     ComponentID = c.ComponentId,
+                                                     Weight = c.PushCriteria,
+                                                     ComponentName = c.ComponentName
+                                                 }).ToList();
+                return data;
+            }
+        }
+        public int? getpushType(int clientid)
+        {
+            using (CMDbContext db = new CMDbContext())
+            {
+                return db.TblClients.Where(x => x.Id == clientid).Select(s => s.IsAutoPushed).FirstOrDefault();
+            }
+        }
+        //End
+        public List<DestinationMap> GetDestinationMap()
+        {
+            using (var _db = new CMDbContext())
+            {
+                var data = (from dm in _db.DestinationMappings
+                            where dm.IsActive == true
+                            orderby dm.FieldName
+                            select new DestinationMap
+                            {
+                                ID = dm.Id,
+                                FieldName = dm.FieldName,
+                                IsActive = dm.IsActive
+                            }).Distinct();
+                return data.ToList();
+            }
+        }
+        public List<ClientListVM> GetClients()
+        {
+
+            int[] clientIdList = new int[] { };
+
+            if (ActiveUser.UserType.ToUpper() == "EXTERNAL")
+            {
+                var _service = new AnalystServices();
+                clientIdList = _service.GetAssignedClientIdList();
+            }
+
+            using (var _db = new CMDbContext())
+            {
+                var data = from c in _db.TblClients
+                           where c.DisplayName != null && !c.IsDeleted
+                           && ((ActiveUser.UserType.ToUpper() == "INTERNAL") || (ActiveUser.UserType.ToUpper() == "EXTERNAL" && clientIdList.Contains(c.Id)))
+                           select new ClientListVM
+                           {
+                               Id = c.Id,
+                               ClientName = c.ClientName,
+                               DisplayName = c.DisplayName,
+                               LogoName = c.LogoName,
+
+                               AssignScoreToClientVM = (
+                                            from astc in _db.AssignScoreToClients
+                                            join sc in _db.TblScoreAndComponents on astc.ScoreId equals sc.ScoreId
+                                            where astc.ClientId == c.Id && astc.ComponentId == sc.ScoreComponentId
+                                            select new AssignScoreToClientVM
+                                            {
+                                                Id = astc.Id,
+                                                ScoreId = astc.ScoreId,
+                                                AgentId = astc.AgentId,
+                                                CreatedDate = astc.CreatedDate,
+                                                ComponentId = astc.ComponentId,
+                                                ComponentName = astc.ComponentName,
+                                                ClientId = astc.ClientId,
+                                                ClientName = astc.ClientName,
+                                                SectionId = astc.SectionId,
+                                                SectionName = astc.SectionName,
+                                                ScoreName = sc.ScoreName,
+                                                SubSectionId = astc.SubSectionId,
+                                                SubSectionName = astc.SubsectionName,
+                                                DisplayComponentName = astc.DisplayComponentName,
+                                            }
+                                         ).ToList(),
+
+                               MetaDataVM = (
+                                         from amd in _db.AssignedMetaDatas
+                                         join mdm in _db.MetadataMasters on amd.MasterMetadataId equals mdm.Id
+                                         where amd.ClientId == c.Id
+                                         select new MetaDataModel
+                                         {
+                                             MetaDataColumnName = mdm.MetadataColumnName,
+                                             MetaDataEntityName = mdm.MetadataEntityName,
+                                             MetaDataGroupName = mdm.GroupName,
+                                             DisplayName = amd.FriendlyName,
+                                         }
+                                      ).ToList(),
+
+                               PowerBIDashboardVM = (
+                                         from adb in _db.ClientDashBoards
+                                         where adb.ClientId == c.Id && adb.IsActive
+                                         select new TitleVM
+                                         {
+                                             Id = adb.Id,
+                                             Title = adb.BoardName
+                                         }
+                                      ).ToList(),
+
+                           };
+                return data.ToList();
+            }
+
+        }
+
+        public int? NoOfCorrelations()
+        {
+            using (var _db = new CMDbContext())
+            {
+                var data = _db.CallIngestionSettings.Where(x => x.SourceName == "" || x.IsDeleted != "1").Select(y => new Correlations
+                {
+                    NoOfCorrelations = y.NoOfCorrelations
+                }).FirstOrDefault();
+                return data?.NoOfCorrelations;
+            }
+        }
+        public string DefaultCorrelation(string keyName)
+        {
+            using (var _db = new CMDbContext())
+            {
+                var data = _db.GlobalProjectConfigurations.Where(x => x.KeyName == keyName).Select(y => new Correlations
+                {
+                    DefaultCorrelation = y.Value
+                }).FirstOrDefault();
+                return !string.IsNullOrWhiteSpace(data?.DefaultCorrelation) ? data?.DefaultCorrelation : "6";
+            }
+        }
+
+        public List<MiningSummaryVM> GetEventsFromDB(int? Clientid, int? PageNo, int? PageSize, DateTime? FromDate, DateTime? ToDate, string GroupBy, int? timezoneid)
+        {
+            using (var con = new SqlConnection(Helper.GetConnectionString()))
+            {
+                con.Open();
+                SqlCommand cmm = new SqlCommand("GetMiningSummary", con);
+                cmm.CommandType = CommandType.StoredProcedure;
+                cmm.Parameters.AddWithValue("@Clientid", Clientid);
+                cmm.Parameters.AddWithValue("@PageNo", PageNo);
+                cmm.Parameters.AddWithValue("@PageSize", PageSize);
+                cmm.Parameters.AddWithValue("@FromDate", FromDate);
+                cmm.Parameters.AddWithValue("@ToDate", ToDate);
+                cmm.Parameters.AddWithValue("@GroupBy", GroupBy);
+                cmm.Parameters.AddWithValue("@timezoneid", timezoneid);
+
+                SqlDataAdapter adapter = new SqlDataAdapter();
+                cmm.CommandTimeout = 1800000000;
+                adapter.SelectCommand = cmm;
+                DataTable dt = new DataTable();
+                adapter.Fill(dt);
+                con.Close();
+                var data = dt.AsEnumerable().Select(r => new MiningSummaryVM {
+                            FirstColumn = r.Field<string>("FirstColumn") ,
+                            DownloadAudio = r.Field<int?>("DownloadAudio") ,
+                            DownloadAudioAccepted = r.Field<int?>("DownloadAudioAccepted") ,
+                            DownloadRejAudio = r.Field<int?>("DownloadRejAudio") ,
+                            DownloadMetaData = r.Field<int?>("DownloadMetaData") ,
+                            DownloadMetaDataAccepted = r.Field<int?>("DownloadMetaDataAccepted") ,
+                            DownloadRejMetaData = r.Field<int?>("DownloadRejMetaData") ,
+                            ConvertIdentifiedAudio = r.Field<int?>("ConvertIdentifiedAudio") ,
+                            ConvertValidAudio = r.Field<int?>("ConvertValidAudio") ,
+                            ConvertRejAudio = r.Field<int?>("ConvertRejAudio") ,
+                            ConvertIdenMetaData = r.Field<int?>("ConvertIdenMetaData") ,
+                            ConvertValidMetaData = r.Field<int?>("ConvertValidMetaData") ,
+                            ConvertRejMetaData = r.Field<int?>("ConvertRejMetaData") ,
+                            IngestionPublished = r.Field<int?>("IngestionPublished") ,
+                            IngestionUnPublished = r.Field<int?>("IngestionUnPublished") ,
+                            IngestionTotalReceivables = r.Field<int?>("IngestionTotalReceivables") ,
+                            IngestionConsumableFiles = r.Field<int?>("IngestionConsumableFiles") ,
+                            IngestionInvalid = r.Field<int?>("IngestionInvalid") ,
+                            IngestionTotalIdentified = r.Field<int?>("IngestionTotalIdentified") ,
+                            IngestionPaired = r.Field<int?>("IngestionPaired") ,
+                            IngestionRejected = r.Field<int?>("IngestionRejected") ,
+                            IngestionDone = r.Field<int?>("IngestionDone") ,
+                            IcapIdentified = r.Field<int?>("IcapIdentified") ,
+                            IcapRejected = r.Field<int?>("IcapRejected") ,
+                            IcapDone = r.Field<int?>("IcapDone") ,
+                            rowno = r.Field<long?>("rowno"),
+                            CallIngestionMiningSummariesids = r.Field<string>("CallIngestionMiningSummariesids"),
+                            DownloadRejAudioId = r.Field<int?>("DownloadRejAudioId"),
+                            DownloadRejMetaDataId = r.Field<int?>("DownloadRejMetaDataId"),
+                            ConvertRejAudioId = r.Field<int?>("ConvertRejAudioId"),
+                            ConvertRejMetaDataId = r.Field<int?>("ConvertRejMetaDataId"),
+                            IngestionInvalidId = r.Field<int?>("IngestionInvalidId"),
+                            IngestionRejectedId = r.Field<int?>("IngestionRejectedId"),
+                            IcapRejectedId = r.Field<int?>("IcapRejectedId"),
+                            TranscriptsCopyFailedID = r.Field<int?>("TranscriptsCopyFailedID"),
+                            TranscriptsFailedID = r.Field<int?>("TranscriptsFailedID"),
+                            TotalRecords = r.Field<int?>("TotalRecords"),
+                            
+                            TranscriptCopyFailed = r.Field<int?>("TranscriptCopyFailed"),
+                            TranscriptCopySuccess = r.Field<int?>("TranscriptCopySuccess"),
+                            TranscriptDone = r.Field<int?>("TranscriptDone"),
+                            TranscriptFailed = r.Field<int?>("TranscriptFailed"),
+                            TranscriptTotalCount = r.Field<int?>("TranscriptTotalCount"),
+                            TranscriptReceived = r.Field<int?>("TranscriptReceived"),
+                            TranscriptPending = r.Field<int?>("TranscriptPending"),
+                            TranscriptRepackaged = r.Field<int?>("TranscriptRepackaged"),
+                            FailTranscriptToCallMiner = r.Field<int?>("FailTranscriptToCallMiner"),
+                            PendingforCallminer = r.Field<int?>("PendingforCallminer"),
+                            DoneforCallminer = r.Field<int?>("DoneforCallminer"),
+                    MetadataingestedRecord = r.Field<int?>("MetadataingestedRecord"),
+
+                }).ToList();
+                return data;
+            }
+        }
+
+        public List<MiningSummaryRejectionDataVM> GetRejectionReasonsFromDB(int? RejectionTypeId, string MiningSummaryIds)
+        {
+            using (var con = new SqlConnection(Helper.GetConnectionString()))
+            {
+                con.Open();
+                SqlCommand cmm = new SqlCommand("GetMiningSummaryRejectionData", con);
+                cmm.CommandType = CommandType.StoredProcedure;
+                cmm.Parameters.AddWithValue("@MiningSummaryIds", MiningSummaryIds);
+                cmm.Parameters.AddWithValue("@RejectionTypeId", RejectionTypeId);
+
+                SqlDataAdapter adapter = new SqlDataAdapter();
+                cmm.CommandTimeout = 1800000000;
+                adapter.SelectCommand = cmm;
+                DataTable dt = new DataTable();
+                adapter.Fill(dt);
+                con.Close();
+                var data = dt.AsEnumerable().Select(r => new MiningSummaryRejectionDataVM
+                {
+                    rejectionreason = r.Field<string>("rejectionreason"),
+                    rejectioncount = r.Field<int?>("rejectioncount"),
+                    
+                }).ToList();
+                return data;
+            }
+        }
+
+    }
+}
